@@ -8,6 +8,10 @@
 
 <img src="icon.svg" alt="icon" width="88" height="88">
 
+<img src="docs/preview.png" alt="设置 → 本地扩展清单" width="880">
+
+<sub>设置 → 本地扩展清单：28 项扩展按来源分组，统计胶囊可点、技能直接开关。</sub>
+
 ## 安装
 
 ```bash
