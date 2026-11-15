@@ -324,7 +324,97 @@ async function buildSkillItem(key, dir, rootId, rootLabel, enabled, md, entry, s
     registered: Boolean(prov.source),
     hasRegistryEntry: Boolean(entry),
     files: children.filter((n) => !n.startsWith('.')).length,
+    capabilities: await scanCapabilities(dir),
   }
+}
+
+// ---- 能力扫描：静态读一遍目录里的文本文件，列出它会联网/执行命令/写文件/要密钥 ----
+const SCAN_TEXT_EXT = new Set(['.md', '.markdown', '.js', '.mjs', '.cjs', '.ts', '.py', '.sh', '.ps1', '.cmd', '.bat', '.json', '.yml', '.yaml', '.txt', '.toml'])
+const SCAN_MAX_BYTES = 256 * 1024
+const SCAN_MAX_FILES = 400
+const NET_RE = /\bhttps?:\/\/[^\s"'`<>)\]}\u3000]+/g
+const EXEC_RE = /\b(child_process|execSync|spawnSync|spawn\s*\(|execFile|subprocess\.|os\.system\s*\(|powershell|pwsh|cmd\.exe|bash\s+-c|sh\s+-c|npx\s+\S|pip\s+install|conda\s+install|npm\s+install)\b/g
+const FS_RE = /\b(writeFile|appendFile|rmSync|unlinkSync|renameSync|mkdirSync|copyFile|rm\s+-rf|mv\s+\S+\s+\S+)\b/g
+const SECRET_RE = /\b([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*)\b/g
+
+async function collectScanFiles(root, prefix, out) {
+  if (out.length >= SCAN_MAX_FILES) return
+  let names = []
+  try {
+    names = await readdir(prefix ? path.join(root, prefix) : root, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const ent of names) {
+    if (out.length >= SCAN_MAX_FILES) return
+    if (ent.name.startsWith('.') && ent.name !== '.env.example') continue
+    const rel = prefix ? prefix + '/' + ent.name : ent.name
+    if (ent.isDirectory()) {
+      if (SKIP_DIRS.has(ent.name)) continue
+      await collectScanFiles(root, rel, out)
+      continue
+    }
+    if (!ent.isFile()) continue
+    const ext = path.extname(ent.name).toLowerCase()
+    if (!SCAN_TEXT_EXT.has(ext)) continue
+    out.push(rel)
+  }
+}
+
+function pushSample(bucket, value, limit = 6) {
+  if (!value) return
+  const v = String(value).trim()
+  if (!v || bucket.includes(v)) return
+  if (bucket.length < limit) bucket.push(v)
+}
+
+async function scanCapabilities(dir) {
+  const result = { files: 0, scanned: 0, net: [], exec: [], fs: [], secrets: [], runtime: [] }
+  const rels = []
+  await collectScanFiles(dir, '', rels)
+  const runtime = new Set()
+  for (const rel of rels) {
+    if (result.scanned >= SCAN_MAX_FILES) break
+    const abs = path.join(dir, rel)
+    let st = null
+    try {
+      st = await stat(abs)
+    } catch {
+      continue
+    }
+    if (!st || st.size > SCAN_MAX_BYTES) continue
+    let text = ''
+    try {
+      text = await readFile(abs, 'utf8')
+    } catch {
+      continue
+    }
+    result.files += 1
+    result.scanned += 1
+    const ext = path.extname(rel).toLowerCase()
+    if (ext === '.py') runtime.add('python')
+    if (ext === '.js' || ext === '.mjs' || ext === '.cjs') runtime.add('node')
+    if (ext === '.ps1') runtime.add('powershell')
+    if (ext === '.sh') runtime.add('shell')
+    NET_RE.lastIndex = 0
+    EXEC_RE.lastIndex = 0
+    FS_RE.lastIndex = 0
+    SECRET_RE.lastIndex = 0
+    let m
+    while ((m = NET_RE.exec(text))) {
+      try {
+        pushSample(result.net, new URL(m[0]).hostname)
+      } catch {
+        /* 非标准 URL，忽略 */
+      }
+    }
+    while ((m = EXEC_RE.exec(text))) pushSample(result.exec, m[1].replace(/\s+/g, ' '))
+    while ((m = FS_RE.exec(text))) pushSample(result.fs, m[1].replace(/\s+/g, ' '))
+    while ((m = SECRET_RE.exec(text))) pushSample(result.secrets, m[1])
+    if (result.net.length >= 6 && result.exec.length >= 6 && result.fs.length >= 6 && result.secrets.length >= 6) break
+  }
+  result.runtime = [...runtime]
+  return result
 }
 
 async function scanRegistryItems(items, registry) {
@@ -1005,12 +1095,78 @@ async function selfUpdate() {
 
 const RESTART_LOG = path.join(os.tmpdir(), 'dsh-restart.log')
 
-/** 桌面端才有可重启的应用进程：exe 由宿主进程的环境变量给出。 */
-function restartTarget() {
+/** 跑一条命令，只要 stdout 文本（超时或失败返回空串）。 */
+function execText(command, args, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    let child = null
+    try {
+      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+    } catch {
+      resolve('')
+      return
+    }
+    let out = ''
+    let done = false
+    const finish = (value) => {
+      if (done) return
+      done = true
+      try {
+        child.kill()
+      } catch {
+        /* 已经退出 */
+      }
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(''), timeoutMs)
+    if (timer.unref) timer.unref()
+    child.stdout.on('data', (chunk) => {
+      out += chunk
+      if (out.length > 64 * 1024) finish(out)
+    })
+    child.on('error', () => {
+      clearTimeout(timer)
+      finish('')
+    })
+    child.on('exit', () => {
+      clearTimeout(timer)
+      finish(out)
+    })
+  })
+}
+
+/**
+ * 找到桌面版的 exe：先看环境变量与自身 execPath，都不像桌面的就枚举进程。
+ * 早期版本只信环境变量，在 CLI 形态或环境被裁剪时会误判成「不是桌面端」。
+ */
+async function restartTarget() {
+  const isDesktopName = (value) => /^DeepSeek Harness(\.exe)?$/i.test(path.basename(String(value || '').trim()))
+  const seen = []
+  const push = (value) => {
+    const clean = String(value || '').trim()
+    if (!clean || !isDesktopName(clean)) return
+    if (seen.some((known) => known.toLowerCase() === clean.toLowerCase())) return
+    seen.push(clean)
+  }
+
+  push(process.env.DSH_NODE_EXECUTABLE)
+  push(process.execPath)
+
   const installDir = String(process.env.DSH_INSTALL_DIR || '')
-  const exe = String(process.env.DSH_NODE_EXECUTABLE || '')
-  const desktop = /app\.asar/i.test(installDir) || /^DeepSeek Harness(\.exe)?$/i.test(path.basename(exe))
-  return { desktop: desktop && Boolean(exe), exe }
+  const marker = installDir.toLowerCase().indexOf('resources')
+  if (marker > 0) push(path.join(installDir.slice(0, marker), 'DeepSeek Harness.exe'))
+
+  if (seen.length === 0) {
+    const found = await execText('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "Get-CimInstance Win32_Process -Filter \"Name='DeepSeek Harness.exe'\" | Select-Object -First 1 -ExpandProperty ExecutablePath",
+    ])
+    for (const line of String(found || '').trim().split(String.fromCharCode(10))) push(line)
+  }
+
+  const exe = seen[0] || ''
+  return { desktop: Boolean(exe), exe, candidates: seen }
 }
 
 const HELPER_SOURCE =
@@ -1165,12 +1321,49 @@ const HELPER_SOURCE =
     "",
     "  await sleep(900)",
     "  log('relaunch ' + exe)",
+    "  const cleanEnv = Object.assign({}, process.env)",
+    "  delete cleanEnv.ELECTRON_RUN_AS_NODE",
+    "  delete cleanEnv.GI_HOST_PID",
+    "  delete cleanEnv.GI_MAIN_PID",
+    "  delete cleanEnv.GI_EXE",
+    "  delete cleanEnv.GI_LOG",
+    "  let earlyFail = false",
     "  try {",
-    "    const child = spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: false })",
+    "    const child = spawn(exe, [], {",
+    "      detached: true,",
+    "      stdio: 'ignore',",
+    "      env: cleanEnv,",
+    "      cwd: path.dirname(exe),",
+    "      windowsHide: false,",
+    "    })",
+    "    let exited = null",
+    "    child.on('exit', function (code) { if (exited === null) exited = typeof code === 'number' ? code : -1 })",
     "    child.unref()",
     "    log('relaunched pid=' + child.pid)",
+    "    await sleep(2500)",
+    "    if (exited !== null) {",
+    "      earlyFail = true",
+    "      log('relaunch exited early code=' + exited)",
+    "    }",
     "  } catch (error) {",
+    "    earlyFail = true",
     "    log('relaunch failed: ' + (error && error.message))",
+    "  }",
+    "  if (earlyFail) {",
+    "    log('fallback relaunch via cmd start')",
+    "    try {",
+    "      const fb = spawn('cmd', ['/c', 'start', '', exe], {",
+    "        detached: true,",
+    "        stdio: 'ignore',",
+    "        env: cleanEnv,",
+    "        cwd: path.dirname(exe),",
+    "      })",
+    "      fb.unref()",
+    "      await sleep(1200)",
+    "      log('fallback spawned')",
+    "    } catch (error) {",
+    "      log('fallback failed: ' + (error && error.message))",
+    "    }",
     "  }",
     "  await sleep(600)",
     "  try {",
@@ -1192,8 +1385,10 @@ let restarting = false
  * 先 taskkill（不带 /F，等于请它自己关窗退出），退不掉再 /F，最后重新拉起。
  */
 async function restartDsh() {
-  const target = restartTarget()
-  if (!target.desktop) throw new Error('这个 DSH 不是桌面端，没有可重启的应用进程')
+  const target = await restartTarget()
+  if (!target.desktop) {
+    throw new Error('找不到 DeepSeek Harness.exe（这个宿主可能不是桌面版），请手动退出并重新打开')
+  }
   if (restarting) return { ok: true, restarting: true, already: true }
   restarting = true
   const helperPath = path.join(os.tmpdir(), 'dsh-restart-' + Date.now().toString(36) + '.cjs')
@@ -1286,7 +1481,7 @@ function isLoopbackRequest(req) {
 /* ---------------------------------------------------------------- the plugin */
 
 /** 仅供测试：把内部纯函数暴露出来，宿主运行时不会用到。 */
-export const __internals = { rawUrl, rawGet, sha256, contentCompare }
+export const __internals = { rawUrl, rawGet, sha256, contentCompare, scanCapabilities, restartTarget }
 
 export function apply(ctx) {
   const disposers = []

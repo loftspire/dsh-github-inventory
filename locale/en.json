@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "GitHub downloads",
-    "description": "Lists the skills, CLIs and plugin bundles installed into this machine from GitHub, explains what each one does, and switches skills on or off.",
+    "title": "Local extensions",
+    "description": "What was installed on this machine from GitHub: what each one does, where it lives, whether an update exists, and skills you can switch off.",
     "detail": "docs/DETAIL.md"
   }
 }

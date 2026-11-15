@@ -1,11 +1,11 @@
 {
   "name": "dsh-github-inventory",
-  "version": "0.6.2",
+  "version": "0.6.6",
   "type": "module",
   "scripts": {
     "test": "node tests/run.mjs"
   },
-  "description": "Lists tools installed from GitHub into this Harness, says what each one does, and switches skills on or off.",
+  "description": "本地扩展清单：看看这台机器上从 GitHub 装了什么——每个东西能干什么、装在哪、有没有新版本，技能可随时开关。",
   "license": "MIT",
   "repository": {
     "type": "git",

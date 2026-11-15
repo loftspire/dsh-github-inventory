@@ -245,3 +245,56 @@ HEAD 变，导致这类条目永远显示「有新版本」。
 技能的上游路径按顺序试：登记的子目录 → 仓库根 `SKILL.md` → `skills/<key>/SKILL.md`。
 这样「仓库根平铺的技能」（如 lieflat-less-ai-tone）和「skills/<name>/ 结构」（如 nature-*、
 本插件自己的 agent-desktop 技能）都能比到，不需要每条都手工登记子目录。
+
+## 0.6.3 · 顶部统计胶囊可点筛选
+
+顶部那排统计胶囊（共 N 项 / 启用 / 停用 / 可更新 / 来源未知）从纯展示改成了按钮：
+
+- 点一下 = 按这一类筛选，等价于在下拉里选对应状态；再点一下取消，回到「全部状态」。
+- 选中态用品牌色实心底，`aria-pressed` 与 `title` 同时翻转（「只看这一类」/「再点一次显示全部」）。
+- 和状态下拉共用同一个 `status` 状态值，所以点胶囊下拉会跟着变、点下拉胶囊也会跟着亮。
+- 「匹配 N 项」仍是不可点的普通 span——它是筛选结果，不是筛选条件。
+
+## 0.6.4 · 详情卡里的「能力扫描」
+
+用户最初的需求是「看看每个东西能干什么」，0.6.4 补上了一份静态扫描：
+
+- `scanCapabilities(dir)` 递归读目录里的文本文件（`.md/.js/.py/.sh/.ps1/.cmd/.json/.yml/.txt/.toml` 等），跳过 `.git`、`node_modules`、点开头的目录，单文件上限 256 KiB、上限 400 个文件。
+- 分类收口四个清单：`net`（出现过的域名）、`exec`（`child_process`/`subprocess`/`powershell`/`npm install` 之类）、`fs`（`writeFile`/`rm -rf` 之类）、`secrets`（`*_TOKEN`/`*_API_KEY` 之类环境变量名），外加 `runtime`（目录里出现的执行环境）。
+- 详情卡新增「能力扫描」块：一行一句「扫了 N 个文本文件」，下面按类列小标签；一条都没扫到时明确写「没扫到不等于安全」。
+- 列表接口每项多一个 `capabilities` 字段；30 个条目的列表实测约 230 ms，可接受。
+
+## 0.6.5 · 重启不再靠环境变量，顺便改名
+
+以前「重启 DSH」只认两个环境变量（`DSH_INSTALL_DIR`、`DSH_NODE_EXECUTABLE`），
+插件宿主拿到的环境可能被裁剪，于是按钮会莫名报「这个 DSH 不是桌面端」。
+现在按顺序找 exe：
+
+1. `DSH_NODE_EXECUTABLE`
+2. `process.execPath`（Electron 宿主里它就是应用本体）
+3. 从 `DSH_INSTALL_DIR` 里切掉 `resources/app.asar` 再拼 `DeepSeek Harness.exe`
+4. 都落空时枚举进程：
+   `Get-CimInstance Win32_Process -Filter "Name='DeepSeek Harness.exe'"` 取 `ExecutablePath`
+
+拿到 exe 后由一次性 helper 干活：沿父进程链找到真正的应用进程 → `taskkill` 优雅关闭、
+超时再 `/F` → 等残留退出 → 用同一个 exe 重新拉起 → 删掉自己。
+四条路都找不到时，错误文案改成让人「手动退出重开」，不再谎称「不是桌面端」。
+
+显示名同时从「GitHub 下载」改为 **本地扩展清单**（`locale/*.json` 的 `meta.title`、
+设置页入口、页面标题一起改），简介写明它做什么，英文侧是 `Local extensions`。
+
+## 0.6.6 · 修「只杀掉、不重开」
+
+重启助手自己是被 `ELECTRON_RUN_AS_NODE=1` 拉起来的（借宿主 exe 当 node 用），
+于是它 `spawn(exe)` 重新拉起应用时，这个变量被一起继承下去——
+新进程也就当 node 跑，没有脚本、没有窗口，立刻退出。日志里只能看到
+`relaunched pid=...`，看上去「启动成功了」，实际什么都没起来。
+
+现在的做法：
+
+- 拉起应用前先拷一份环境，删掉 `ELECTRON_RUN_AS_NODE` 和 `GI_*` 变量，再 `spawn(exe, [], { env, cwd: 应用目录 })`；
+- 启动后盯 2.5 秒，进程提前退出就把退出码写进 `%TEMP%\dsh-restart.log`；
+- 万一还是不行，退一步用 `cmd /c start "" <exe>`（同样带干净环境）再拉一次。
+
+判断是否修好：点一次「重启 DSH」，看 `%TEMP%\dsh-restart.log` 末几行——
+成功只会有 `relaunched pid=`，不该出现 `relaunch exited early`。

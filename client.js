@@ -1,7 +1,7 @@
 /**
  * dsh-github-inventory — client half.
  *
- * 设置页「GitHub 下载」：像插件市场那样按技能 / 命令行工具 / 插件包分组，
+ * 设置页「本地扩展清单」：按技能 / 命令行工具 / 插件包分组，
  * 顶部搜索 + 类型与状态筛选 + 排序，行可收藏、可开关（技能）、可跳 GitHub，
  * 点一行打开详情（它能干什么、本地位置、原仓库与下载页）。
  */
@@ -61,6 +61,27 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-bg-layer-2, #f5f6f7);
   border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); }
 .gi-chip b { color: var(--dsw-alias-label-primary, #1f2329); font-weight: 600; }
+.gi-chip.btn { font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s; }
+.gi-chip.btn:hover { border-color: var(--dsw-alias-brand-primary, #3370ff);
+  color: var(--dsw-alias-brand-primary, #3370ff); }
+.gi-chip.btn.on { background: var(--dsw-alias-brand-primary, #3370ff);
+  border-color: var(--dsw-alias-brand-primary, #3370ff);
+  color: var(--dsw-alias-fg-on-accent, #ffffff); }
+.gi-chip.btn.on b { color: inherit; }
+.gi-chip.btn.on:hover { color: var(--dsw-alias-fg-on-accent, #ffffff); }
+.gi-chip.btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #3370ff);
+  outline-offset: 2px; }
+.gi-caps { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.gi-caprow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.gi-caplabel { min-width: 56px; font-size: 11px; color: var(--dsw-alias-label-secondary, #646a73); }
+.gi-captag { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  padding: 1px 6px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2, #f5f6f7);
+  border: 1px solid var(--dsw-alias-border-l1, #e5e6eb);
+  color: var(--dsw-alias-label-primary, #1f2329); max-width: 260px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.gi-captag.sec, .gi-caprow .gi-captag { }
+.gi-capblock .gi-hint { margin-top: 4px; }
 .gi-chip.warn { color: var(--dsw-alias-state-warn-primary, #b26b00); background: rgba(178,107,0,.08);
   border-color: rgba(178,107,0,.25); }
 .gi-banner { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; line-height: 1.6;
@@ -298,7 +319,24 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function Row(props) {
+    /** 顶部统计小胶囊：点一下按这一类筛选，再点一次取消——和状态下拉是同一套取值。 */
+function StatChip(props) {
+  const active = props.status === props.value
+  const className = 'gi-chip btn' + (props.className ? ' ' + props.className : '') + (active ? ' on' : '')
+  return h(
+    'button',
+    {
+      type: 'button',
+      className,
+      'aria-pressed': active ? 'true' : 'false',
+      title: active ? '再点一次显示全部' : '只看这一类',
+      onClick: () => props.onPick(active ? 'all' : props.value),
+    },
+    props.children,
+  )
+}
+
+function Row(props) {
       const { item, busy, onToggle, onOpen, onStar } = props
       const meta = []
       if (item.installedAt) meta.push(item.installedAt)
@@ -480,6 +518,16 @@ window.__ModuleLoader__.load({
       const primaryHref = download || repo
       const primaryLabel = !download || download === repo ? '打开 GitHub 页面' : '打开下载页'
 
+      const caps = item.capabilities || null
+      const capRows = caps
+        ? [
+            ['联网', caps.net || [], 'net'],
+            ['执行命令', caps.exec || [], 'exec'],
+            ['写文件', caps.fs || [], 'fs'],
+            ['需要密钥', caps.secrets || [], 'sec'],
+          ].filter((row) => row[1].length > 0)
+        : []
+
       const kv = [
         ['类型', KIND_LABEL[item.kind] || item.kind],
         item.version ? ['版本', item.version] : null,
@@ -532,6 +580,38 @@ window.__ModuleLoader__.load({
               h('div', { className: 'gi-label' }, '它能干什么'),
               h('div', { className: 'gi-text' }, item.summaryFull || item.summary || '（登记表里没写说明）'),
             ),
+            caps && caps.scanned
+              ? h(
+                  'div',
+                  { className: 'gi-block gi-capblock' },
+                  h('div', { className: 'gi-label' }, '能力扫描'),
+                  h(
+                    'div',
+                    { className: 'gi-hint' },
+                    '扫了 ' +
+                      caps.files +
+                      ' 个文本文件' +
+                      (caps.runtime && caps.runtime.length ? '（含 ' + caps.runtime.join(' / ') + '）' : '') +
+                      '。这里只列出它可能会碰到什么，没扫到不等于安全。',
+                  ),
+                  capRows.length
+                    ? h(
+                        'div',
+                        { className: 'gi-caps' },
+                        capRows.map(([label, values, key]) =>
+                          h(
+                            'div',
+                            { className: 'gi-caprow', key },
+                            h('span', { className: 'gi-caplabel' }, label),
+                            values.map((value) =>
+                              h('code', { className: 'gi-captag', key: key + ':' + value }, value),
+                            ),
+                          ),
+                        ),
+                      )
+                    : h('div', { className: 'gi-hint' }, '没有扫到联网、执行命令或写文件的痕迹。'),
+                )
+              : null,
             h(
               'div',
               { className: 'gi-block' },
@@ -908,7 +988,15 @@ window.__ModuleLoader__.load({
         try {
           const response = await fetch('/api/github-inventory/restart', { method: 'POST', credentials: 'same-origin' })
           const result = await response.json().catch(() => ({}))
-          if (!response.ok || !result.ok) throw new Error(result.error || 'HTTP ' + response.status)
+          if (!response.ok || !result.ok) {
+            // 401 / 404 = 正在跑的宿主还是旧版本，路由没注册上（重启接口是后加的）
+            if (response.status === 401 || response.status === 404) {
+              throw new Error(
+                '正在运行的宿主还是旧版本，没有重启接口。请先手动退出并重开一次 DSH，之后这个按钮就能用了。',
+              )
+            }
+            throw new Error(result.error || 'HTTP ' + response.status)
+          }
         } catch (error) {
           setRestartBusy(false)
           setNotice('')
@@ -995,7 +1083,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             null,
-            h('h2', { className: 'gi-h1' }, 'GitHub 下载'),
+            h('h2', { className: 'gi-h1' }, '本地扩展清单'),
             h(
               'p',
               { className: 'gi-sub' },
@@ -1112,16 +1200,21 @@ window.__ModuleLoader__.load({
           ? h(
               'div',
               { className: 'gi-chips' },
-              h('span', { className: 'gi-chip' }, '共 ', h('b', null, data.counts.total), ' 项'),
-              h('span', { className: 'gi-chip' }, '启用 ', h('b', null, data.counts.enabled)),
-              h('span', { className: 'gi-chip' }, '停用 ', h('b', null, data.counts.disabled)),
+              h(StatChip, { status, value: 'all', onPick: setStatus }, '共 ', h('b', null, data.counts.total), ' 项'),
+              h(StatChip, { status, value: 'on', onPick: setStatus }, '启用 ', h('b', null, data.counts.enabled)),
+              h(StatChip, { status, value: 'off', onPick: setStatus }, '停用 ', h('b', null, data.counts.disabled)),
               data.counts.updatable
-                ? h('span', { className: 'gi-chip upd' }, '可更新 ', h('b', null, data.counts.updatable))
+                ? h(
+                    StatChip,
+                    { status, value: 'updatable', onPick: setStatus, className: 'upd' },
+                    '可更新 ',
+                    h('b', null, data.counts.updatable),
+                  )
                 : null,
               data.counts.unknown
                 ? h(
-                    'span',
-                    { className: 'gi-chip warn' },
+                    StatChip,
+                    { status, value: 'unregistered', onPick: setStatus, className: 'warn' },
                     '来源未知 ',
                     h('b', null, data.counts.unknown),
                   )
@@ -1298,7 +1391,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.slots.inject('settings.section', () =>
           ctx.slots.register(
-            { name: 'settings.section', id: 'github-inventory', order: 56, label: 'GitHub 下载' },
+            { name: 'settings.section', id: 'github-inventory', order: 56, label: '本地扩展清单' },
             Page,
           ),
         )
