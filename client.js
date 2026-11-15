@@ -166,6 +166,16 @@ window.__ModuleLoader__.load({
   border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); }
 .gi-secondary:hover { background: var(--dsw-alias-interactive-bg-hover, #eceef0); }
 .gi-modal-note { margin-left: auto; font-size: 11px; color: var(--dsw-alias-label-tertiary, #8f959e); }
+.gi-badge.upd { color: var(--dsw-alias-state-success-primary, #2ea121); background: rgba(46,161,33,.12); }
+.gi-badge.stale { color: var(--dsw-alias-label-tertiary, #8f959e); background: transparent; }
+.gi-chip.upd { color: var(--dsw-alias-state-success-primary, #2ea121); background: rgba(46,161,33,.1); }
+.gi-chip.upd b { color: var(--dsw-alias-state-success-primary, #2ea121); }
+.gi-banner.self { border-color: rgba(46,161,33,.45); background: rgba(46,161,33,.06); }
+.gi-banner .gi-btn { margin-left: auto; flex: none; }
+.gi-upd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #646a73); }
+.gi-upd .ok { color: var(--dsw-alias-state-success-primary, #2ea121); }
+.gi-upd .muted { color: var(--dsw-alias-label-tertiary, #8f959e); }
 `
 
     function useStyles() {
@@ -309,6 +319,13 @@ window.__ModuleLoader__.load({
             { className: 'gi-title' },
             h('span', { className: 'gi-name' }, item.title || item.key),
             item.version ? h('span', { className: 'gi-badge' }, 'v' + item.version) : null,
+            item.update && item.update.state === 'newer'
+              ? h(
+                  'span',
+                  { className: 'gi-badge upd', title: item.update.note || '' },
+                  item.update.latestVersion ? '可更新 ' + item.update.latestVersion : '有更新',
+                )
+              : null,
             item.kind === 'skill' && !item.enabled ? h('span', { className: 'gi-badge off' }, '已停用') : null,
             item.provenance && item.provenance !== 'registry'
               ? h(
@@ -392,6 +409,7 @@ window.__ModuleLoader__.load({
         item.root ? ['所在位置', item.root] : null,
         item.kind === 'skill' && item.files ? ['目录条目', item.files + ' 个'] : null,
         ['来源', item.provenanceLabel || '未知'],
+        item.update ? ['更新', updateLabel(item.update)] : null,
       ].filter(Boolean)
 
       return h(
@@ -587,6 +605,23 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function updateLabel(u) {
+      if (!u) return ''
+      const when = u.checkedAt ? new Date(u.checkedAt).toLocaleString('zh-CN') : ''
+      if (u.state === 'newer') {
+        if (u.latestVersion) {
+          const at = u.releaseAt ? '（' + new Date(u.releaseAt).toLocaleDateString('zh-CN') + ' 发布）' : ''
+          return '有新版本 ' + u.latestVersion + at
+        }
+        return (u.note || '上游有新的提交') + (u.message ? '：' + u.message : '')
+      }
+      if (u.state === 'current') return '已是最新' + (when ? '（' + when + '）' : '')
+      if (u.state === 'baseline') return '已记录基线，下次检查开始比对'
+      if (u.state === 'no-source') return '没有上游地址，无法检查'
+      if (u.state === 'error') return '检查失败：' + (u.error || '未知错误')
+      return u.note || ''
+    }
+
     function matches(item, query) {
       if (!query) return true
       const hay = [item.title, item.key, item.summary, item.summaryFull, item.source, item.version, item.root]
@@ -605,6 +640,8 @@ window.__ModuleLoader__.load({
       const [kind, setKind] = React.useState('all')
       const [status, setStatus] = React.useState('all')
       const [sort, setSort] = React.useState('date')
+      const [checkBusy, setCheckBusy] = React.useState(false)
+      const [selfBusy, setSelfBusy] = React.useState(false)
       const searchRef = React.useRef(null)
 
       const load = React.useCallback(async () => {
@@ -696,6 +733,44 @@ window.__ModuleLoader__.load({
         [patchItem],
       )
 
+      const onCheck = React.useCallback(async () => {
+        setCheckBusy(true)
+        setNotice('')
+        try {
+          const response = await fetch('/api/github-inventory/check', { method: 'POST', credentials: 'same-origin' })
+          const result = await response.json().catch(() => ({}))
+          if (!response.ok || !result.ok) throw new Error(result.error || 'HTTP ' + response.status)
+          await load()
+          setNotice(
+            result.newer
+              ? '检查完成：' + result.newer + ' 项有新版本（查了 ' + result.repos + ' 个仓库，' + new Date(result.checkedAt).toLocaleTimeString('zh-CN') + '）'
+              : '检查完成：没有发现新版本（查了 ' + result.repos + ' 个仓库）',
+          )
+        } catch (error) {
+          setState((prev) => ({ ...prev, error: '检查更新失败：' + String((error && error.message) || error) }))
+        } finally {
+          setCheckBusy(false)
+        }
+      }, [load])
+
+      const onSelfUpdate = React.useCallback(async () => {
+        setSelfBusy(true)
+        setNotice('')
+        try {
+          const response = await fetch('/api/github-inventory/self-update', { method: 'POST', credentials: 'same-origin' })
+          const result = await response.json().catch(() => ({}))
+          if (!response.ok || !result.ok) throw new Error(result.error || 'HTTP ' + response.status)
+          setNotice(
+            '插件已更新到 ' + (result.remote || '?') + '（写了 ' + result.files + ' 个文件，旧版备份在 ' + result.backup + '）。重启 DSH 后生效。',
+          )
+          await load()
+        } catch (error) {
+          setState((prev) => ({ ...prev, error: '更新插件失败：' + String((error && error.message) || error) }))
+        } finally {
+          setSelfBusy(false)
+        }
+      }, [load])
+
       const data = state.data
       const items = (data && data.items) || []
       const q = query.trim().toLowerCase()
@@ -706,6 +781,7 @@ window.__ModuleLoader__.load({
         else if (status === 'off') list = list.filter((i) => !i.enabled)
         else if (status === 'unregistered') list = list.filter((i) => !i.registered)
         else if (status === 'favorite') list = list.filter((i) => i.favorite)
+        else if (status === 'updatable') list = list.filter((i) => i.update && i.update.state === 'newer')
         list = list.filter((item) => matches(item, q))
         const sorted = [...list]
         if (sort === 'name') sorted.sort((a, b) => String(a.title || a.key).localeCompare(String(b.title || b.key)))
@@ -757,9 +833,24 @@ window.__ModuleLoader__.load({
             ),
           ),
           h(
-            'button',
-            { type: 'button', className: 'gi-btn', onClick: load, disabled: state.status === 'refreshing' },
-            state.status === 'refreshing' ? '扫描中…' : '重新扫描',
+            'div',
+            { style: { display: 'flex', gap: 8, flex: 'none' } },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'gi-btn',
+                onClick: onCheck,
+                disabled: checkBusy || state.status === 'loading',
+                title: '到 GitHub 上逐项比对上游有没有新版本',
+              },
+              checkBusy ? '检查中…' : '检查更新',
+            ),
+            h(
+              'button',
+              { type: 'button', className: 'gi-btn', onClick: load, disabled: state.status === 'refreshing' },
+              state.status === 'refreshing' ? '扫描中…' : '重新扫描',
+            ),
           ),
         ),
         data
@@ -812,6 +903,7 @@ window.__ModuleLoader__.load({
                 h('option', { value: 'off' }, '已停用 ' + data.counts.disabled),
                 h('option', { value: 'unregistered' }, '没有来源 ' + data.counts.unknown),
                 h('option', { value: 'favorite' }, '★ 收藏 ' + data.counts.favorite),
+                data.counts.updatable ? h('option', { value: 'updatable' }, '可更新 ' + data.counts.updatable) : null,
               ),
               h(
                 'select',
@@ -834,6 +926,9 @@ window.__ModuleLoader__.load({
               h('span', { className: 'gi-chip' }, '共 ', h('b', null, data.counts.total), ' 项'),
               h('span', { className: 'gi-chip' }, '启用 ', h('b', null, data.counts.enabled)),
               h('span', { className: 'gi-chip' }, '停用 ', h('b', null, data.counts.disabled)),
+              data.counts.updatable
+                ? h('span', { className: 'gi-chip upd' }, '可更新 ', h('b', null, data.counts.updatable))
+                : null,
               data.counts.unknown
                 ? h(
                     'span',
@@ -857,6 +952,23 @@ window.__ModuleLoader__.load({
                 '打开详情页可以手动补一个仓库地址，写回 ',
                 h('code', null, '~/.dsh/github-inventory.json'),
                 '。',
+              ),
+            )
+          : null,
+        data && data.self && data.self.newer
+          ? h(
+              'div',
+              { className: 'gi-banner self' },
+              h(
+                'div',
+                null,
+                h('b', null, '这个插件自身有新版本 ' + data.self.remote + '。'),
+                ' 当前 ' + data.self.local + '；更新会先整目录备份，再用仓库 main 分支的文件覆盖，重启 DSH 后生效。',
+              ),
+              h(
+                'button',
+                { type: 'button', className: 'gi-btn', onClick: onSelfUpdate, disabled: selfBusy },
+                selfBusy ? '更新中…' : '更新插件',
               ),
             )
           : null,

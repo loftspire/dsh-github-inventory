@@ -100,3 +100,25 @@
 - `catalog.json` 是公开知识，随包分发；本机登记表只放个人增补。
 
 接口：`POST /api/github-inventory/source`，body `{ key, source, downloadUrl? }`；`source` 必须以 `http(s)://` 开头（否则 400 `invalid source`，长度上限 500），key 校验同其余接口。回环 + 同源校验、非 POST 405 不变。
+
+## 0.4.0 · 检查更新与插件自更新
+
+页面顶部多了一个「检查更新」按钮，两件事一起做：
+
+**① 逐项比对上游。** 先把每个条目的 `source` 归纳成 `owner/repo`，同一个仓库只查一次（nature-* 那 24 个技能共用一个仓库，不会打 24 次），然后：
+
+- 有 release 的条目（Tavotto、Agentero 这类）：`GET /repos/{repo}/releases/latest`，把 `tag_name` 里的版本号和本地 `version` 按语义化版本比对，远端更大就是「有新版本 x.y.z」。
+- 没有 release 的条目（技能、源码型插件）：`GET /repos/{repo}/commits?path=<子目录>&per_page=1`，拿到该目录最新一次提交的 sha。第一次检查只把 sha 记成**基线**（状态 `baseline`，卡片上写「已记录基线，下次检查开始比对」），之后 sha 变了才算「上游这个目录有了新提交」——这样不会因为「本来就没版本号」而误报。
+
+状态一共五种：`newer` 有更新、`current` 与基线一致、`baseline` 刚记基线、`no-source` 没有上游地址、`error` 查不动（网络或限流，卡片上带原因）。结果写进 `~/.dsh/github-inventory-checks.json`，列表接口每次带上 `update` 字段，所以刷新页面不用重新查。
+
+**② 插件自身更新。** 拿 `GET /repos/loftspire/dsh-github-inventory/contents/package.json` 和本地 `package.json` 比版本；远端更新时顶部出现绿色提示条，点「更新插件」= 先整目录备份到 `~/.dsh/backups/github-inventory-<时间戳>/`，再按仓库 main 的文件树逐个下载覆盖（跳过 `.git`、`node_modules`，并拒绝写到插件目录之外）。写完提示「重启 DSH 后生效」——宿主侧代码已经是旧代际，只有重启才会换新的 `apply`。
+
+限流提醒：GitHub 未登录 API 是每小时 60 次，本机 29 项只归约到 6 个仓库、约 12 次请求，够用；条目多起来时可以在环境变量里放 `GITHUB_TOKEN`（只读即可），调用会自动带上。
+
+接口：
+
+- `POST /api/github-inventory/check` → `{ ok, checkedAt, repos, newer, self, items }`
+- `POST /api/github-inventory/self-update` → `{ ok, files, backup, local, remote, restartRequired }`
+
+两条都只收 POST（GET 返 405）、只收回环同源请求（否则 403）。

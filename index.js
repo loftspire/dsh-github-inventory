@@ -8,6 +8,7 @@
 import { readFile, writeFile, mkdir, readdir, stat, rename, cp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 export const name = 'github-inventory'
 export const inject = ['webServer']
@@ -370,8 +371,15 @@ async function buildList() {
 
   const order = { skill: 0, cli: 1, bundle: 2 }
   items.sort((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9) || a.title.localeCompare(b.title))
+  const checks = await readJsonFile(CHECK_FILE, null)
+  const updateOf = (key) => (checks?.items && checks.items[key] ? checks.items[key] : null)
   const linked = items.map((item) =>
-    withLinks({ ...item, favorite: favorites.has(item.key), kindLabel: KIND_LABELS[item.kind] || item.kind }),
+    withLinks({
+      ...item,
+      favorite: favorites.has(item.key),
+      kindLabel: KIND_LABELS[item.kind] || item.kind,
+      update: updateOf(item.key),
+    }),
   )
 
   return {
@@ -387,7 +395,11 @@ async function buildList() {
       unknown: items.filter((i) => !i.registered).length,
       inferred: items.filter((i) => i.provenance === 'inferred').length,
       favorite: items.filter((i) => favorites.has(i.key)).length,
+      updatable: linked.filter((i) => i.update?.state === 'newer').length,
+      checked: linked.filter((i) => i.update).length,
     },
+    self: checks?.self || null,
+    checksAt: checks?.checkedAt || '',
     roots: {
       skills: SKILL_ROOTS.map((r) => r.label),
       stash: '~/.dsh/skills-disabled',
@@ -455,6 +467,221 @@ async function setSkillEnabled(key, enabled) {
   state[key] = path.dirname(from)
   await writeJsonFile(STATE_FILE, state)
   return { key, enabled: false, location: stashedPath }
+}
+
+/* -------------------------------------------------------------- update checks */
+
+const CHECK_FILE = path.join(DSH_HOME, 'github-inventory-checks.json')
+const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url))
+const SELF_REPO = 'loftspire/dsh-github-inventory'
+const SELF_BRANCH = 'main'
+const SKIP_DIRS = new Set(['.git', 'node_modules'])
+
+const API_CHECK = '/api/github-inventory/check'
+const API_SELF_UPDATE = '/api/github-inventory/self-update'
+
+function repoFromSource(source) {
+  const m = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/.exec(String(source || ''))
+  if (!m) return ''
+  return m[1] + '/' + m[2].replace(/\.git$/i, '')
+}
+
+function pathFromDeepLink(deepLink) {
+  const m = /\/tree\/[^/]+\/(.+)$/.exec(String(deepLink || ''))
+  return m ? m[1].replace(/\/+$/, '') : ''
+}
+
+function readToken() {
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ''
+}
+
+function semverOf(text) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(text || ''))
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+
+function compareSemver(a, b) {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] - b[i]
+  }
+  return 0
+}
+
+/** 只读的 GitHub REST 调用；404 视为正常空结果，不抛。 */
+async function githubApi(apiPath) {
+  const token = readToken()
+  const headers = { accept: 'application/vnd.github+json', 'user-agent': 'dsh-github-inventory' }
+  if (token) headers.authorization = 'Bearer ' + token
+  try {
+    const response = await fetch('https://api.github.com' + apiPath, {
+      headers,
+      signal: AbortSignal.timeout(15000),
+    })
+    if (response.status === 404) return { ok: false, status: 404, json: null }
+    const json = await response.json().catch(() => null)
+    return { ok: response.ok, status: response.status, json }
+  } catch (error) {
+    return { ok: false, status: 0, json: null, error: String(error?.message || error) }
+  }
+}
+
+async function checkRepo(repo, pathHint) {
+  const out = {
+    repo,
+    checkedAt: new Date().toISOString(),
+    sha: '',
+    date: '',
+    message: '',
+    release: '',
+    releaseAt: '',
+    error: '',
+  }
+  const query = pathHint ? '?path=' + encodeURIComponent(pathHint) + '&per_page=1' : '?per_page=1'
+  const commits = await githubApi('/repos/' + repo + '/commits' + query)
+  if (commits.ok && Array.isArray(commits.json) && commits.json[0]) {
+    const first = commits.json[0]
+    out.sha = first.sha || ''
+    out.date = first.commit?.author?.date || ''
+    out.message = String(first.commit?.message || '').split('\n')[0].slice(0, 140)
+  } else if (!commits.ok && commits.status !== 404) {
+    out.error = commits.error || 'commits HTTP ' + commits.status
+  }
+  const release = await githubApi('/repos/' + repo + '/releases/latest')
+  if (release.ok && release.json) {
+    out.release = release.json.tag_name || ''
+    out.releaseAt = release.json.published_at || ''
+  }
+  return out
+}
+
+/** 逐项比对上游：有 release 的比版本号，没有的比目标路径最新 commit 与本地基线。 */
+async function runCheck() {
+  const list = await buildList()
+  const previous = await readJsonFile(CHECK_FILE, { repos: {}, baselines: {}, items: {} })
+
+  const wanted = new Map()
+  for (const item of list.items) {
+    const repo = repoFromSource(item.source)
+    if (!repo) continue
+    const pathHint = pathFromDeepLink(item.deepLink)
+    if (!wanted.has(repo) || (pathHint && !wanted.get(repo))) wanted.set(repo, pathHint || '')
+  }
+
+  const repos = {}
+  for (const [repo, pathHint] of [...wanted.entries()].slice(0, 40)) {
+    repos[repo] = await checkRepo(repo, pathHint)
+  }
+
+  const baselines = { ...(previous.baselines || {}) }
+  const items = {}
+  for (const item of list.items) {
+    const repo = repoFromSource(item.source)
+    if (!repo) {
+      items[item.key] = { state: 'no-source' }
+      continue
+    }
+    const info = repos[repo]
+    if (!info) {
+      items[item.key] = { state: 'error', error: '这一轮没有查到该仓库', repo }
+      continue
+    }
+    if (info.error) {
+      items[item.key] = { state: 'error', error: info.error, repo }
+      continue
+    }
+    const latest = semverOf(info.release)
+    const local = semverOf(item.version)
+    if (latest && local && compareSemver(latest, local) > 0) {
+      items[item.key] = {
+        state: 'newer',
+        repo,
+        latestTag: info.release,
+        latestVersion: info.release.replace(/^v/i, ''),
+        releaseAt: info.releaseAt,
+        note: '上游发了新版本',
+      }
+      continue
+    }
+    const prev = baselines[item.key]
+    if (!prev || prev.repo !== repo) {
+      baselines[item.key] = { repo, sha: info.sha || '', at: info.checkedAt }
+      items[item.key] = { state: 'baseline', repo, sha: info.sha || '', note: '已把当前上游提交记为基线' }
+    } else if (info.sha && prev.sha && info.sha !== prev.sha) {
+      items[item.key] = {
+        state: 'newer',
+        repo,
+        sha: info.sha,
+        message: info.message,
+        checkedAt: info.checkedAt,
+        note: '上游这个目录有了新提交',
+      }
+    } else {
+      items[item.key] = { state: 'current', repo, sha: info.sha || '', note: '与记录的基线一致' }
+    }
+  }
+
+  const self = await selfInfo()
+  const payload = { repos, baselines, items, self, checkedAt: new Date().toISOString() }
+  await writeJsonFile(CHECK_FILE, payload)
+  return payload
+}
+
+/** 本插件自身的版本比对：本地 package.json vs 仓库 main 分支的 package.json。 */
+async function selfInfo() {
+  let local = ''
+  try {
+    local = JSON.parse(await readFile(path.join(PLUGIN_DIR, 'package.json'), 'utf8')).version || ''
+  } catch {
+    local = ''
+  }
+  const res = await githubApi('/repos/' + SELF_REPO + '/contents/package.json?ref=' + SELF_BRANCH)
+  let remote = ''
+  if (res.ok && res.json?.content) {
+    try {
+      remote = JSON.parse(Buffer.from(res.json.content, 'base64').toString('utf8')).version || ''
+    } catch {
+      remote = ''
+    }
+  }
+  const a = semverOf(remote)
+  const b = semverOf(local)
+  return {
+    repo: SELF_REPO,
+    local,
+    remote,
+    newer: Boolean(a && b && compareSemver(a, b) > 0),
+    checkedAt: new Date().toISOString(),
+  }
+}
+
+/** 用仓库 main 分支的文件覆盖本插件目录（先整目录备份），返回是否需要重启。 */
+async function selfUpdate() {
+  const tree = await githubApi('/repos/' + SELF_REPO + '/git/trees/' + SELF_BRANCH + '?recursive=1')
+  if (!tree.ok || !Array.isArray(tree.json?.tree)) throw new Error('读不到远端文件树')
+  const blobs = tree.json.tree.filter(
+    (entry) => entry.type === 'blob' && !entry.path.split('/').some((part) => SKIP_DIRS.has(part)),
+  )
+  if (blobs.length === 0) throw new Error('远端文件树是空的')
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backup = path.join(DSH_HOME, 'backups', 'github-inventory-' + stamp)
+  await cp(PLUGIN_DIR, backup, { recursive: true })
+
+  let written = 0
+  for (const blob of blobs) {
+    const apiPath =
+      '/repos/' + SELF_REPO + '/contents/' + blob.path.split('/').map(encodeURIComponent).join('/') + '?ref=' + SELF_BRANCH
+    const res = await githubApi(apiPath)
+    if (!res.ok || !res.json?.content) throw new Error('下载失败：' + blob.path)
+    const target = path.join(PLUGIN_DIR, ...blob.path.split('/'))
+    if (target !== PLUGIN_DIR && !target.startsWith(PLUGIN_DIR + path.sep)) throw new Error('拒绝写入插件目录之外：' + blob.path)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, Buffer.from(res.json.content, 'base64'))
+    written += 1
+  }
+
+  const self = await selfInfo()
+  return { ok: true, files: written, backup, local: self.local, remote: self.remote, restartRequired: true }
 }
 
 /* ---------------------------------------------------------------- http layer */
@@ -591,6 +818,47 @@ export function apply(ctx) {
         }
         try {
           writeJson(res, 200, { ok: true, ...(await saveSource(key, body.source, body.downloadUrl)) })
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: String(error?.message || error) })
+        }
+      },
+    }),
+  )
+
+  disposers.push(
+    ctx.webServer.register({
+      kind: 'exact',
+      path: API_CHECK,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
+        if ((req.method || 'POST') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        try {
+          const result = await runCheck()
+          const newer = Object.values(result.items || {}).filter((v) => v.state === 'newer').length
+          writeJson(res, 200, {
+            ok: true,
+            checkedAt: result.checkedAt,
+            repos: Object.keys(result.repos || {}).length,
+            newer,
+            self: result.self,
+            items: result.items,
+          })
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: String(error?.message || error) })
+        }
+      },
+    }),
+  )
+
+  disposers.push(
+    ctx.webServer.register({
+      kind: 'exact',
+      path: API_SELF_UPDATE,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
+        if ((req.method || 'POST') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        try {
+          writeJson(res, 200, await selfUpdate())
         } catch (error) {
           writeJson(res, 400, { ok: false, error: String(error?.message || error) })
         }
