@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "GitHub downloads",
+    "description": "Lists the skills, CLIs and plugin bundles installed into this machine from GitHub, explains what each one does, and switches skills on or off.",
+    "detail": "docs/DETAIL.md"
+  }
+}

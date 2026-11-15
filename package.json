@@ -1,0 +1,47 @@
+{
+  "name": "dsh-github-inventory",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Lists tools installed from GitHub into this Harness, says what each one does, and switches skills on or off.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loftspire/dsh-github-inventory.git"
+  },
+  "homepage": "https://github.com/loftspire/dsh-github-inventory#readme",
+  "bugs": {
+    "url": "https://github.com/loftspire/dsh-github-inventory/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "skills",
+    "inventory"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "catalog.json",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}

@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "note": "公开包的来源目录，随插件一起分发：新机器上即使没有 ~/.dsh/github-inventory.json，也能认出这些条目的仓库。本机登记表优先级更高。",
+  "items": {
+    "nature-academic-search": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-academic-search"
+    },
+    "nature-citation": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-citation"
+    },
+    "nature-data": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-data"
+    },
+    "nature-downloader": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-downloader"
+    },
+    "nature-experiment-log": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-experiment-log"
+    },
+    "nature-figure": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-figure"
+    },
+    "nature-image2ppt": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-image2ppt"
+    },
+    "nature-literature-pipeline": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-literature-pipeline"
+    },
+    "nature-paper-card": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-paper-card"
+    },
+    "nature-paper-to-patent": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-paper-to-patent"
+    },
+    "nature-paper-trans": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-paper-trans"
+    },
+    "nature-paper-xray": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-paper-xray"
+    },
+    "nature-paper2ppt": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-paper2ppt"
+    },
+    "nature-polishing": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-polishing"
+    },
+    "nature-proposal-writer": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-proposal-writer"
+    },
+    "nature-reader": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-reader"
+    },
+    "nature-ref-verifier": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-ref-verifier"
+    },
+    "nature-response": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-response"
+    },
+    "nature-reviewer": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-reviewer"
+    },
+    "nature-shared": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-shared"
+    },
+    "nature-social-science": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-social-science"
+    },
+    "nature-statistics": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-statistics"
+    },
+    "nature-writing": {
+      "source": "https://github.com/Yuan1z0825/nature-skills",
+      "kind": "skill",
+      "path": "skills/nature-writing"
+    },
+    "lieflat-less-ai-tone": {
+      "kind": "skill",
+      "source": "https://github.com/larashero3-dotcom/lieflat-less-ai-tone",
+      "summary": "三层去 AI 味：脚本分级报告 + 语义层判读，改前报告与前后对比。"
+    },
+    "agent-desktop": {
+      "kind": "skill",
+      "source": "https://github.com/vercel-labs/agent-desktop",
+      "summary": "用无障碍树语义化操作 Windows GUI，按角色/名字找控件，不靠坐标猜。"
+    },
+    "tavotto-figure": {
+      "kind": "skill",
+      "source": "https://github.com/Tavotto/Tavotto",
+      "summary": "论文级 matplotlib 作图与保留式规范化（改宽度/字体/最小字号），Tavotto 微调与矢量导出。"
+    },
+    "rea": {
+      "kind": "bundle",
+      "source": "https://github.com/morluto/rea",
+      "summary": "逆向工程工具箱（静态分析、反编译、抓包），带技能与 MCP。"
+    },
+    "rea-agents": {
+      "kind": "bundle",
+      "source": "https://github.com/morluto/rea",
+      "summary": "逆向工程工具箱（静态分析、反编译、抓包），带技能与 MCP。"
+    },
+    "agentero": {
+      "kind": "cli",
+      "source": "https://github.com/poco-ai/Agentero",
+      "summary": "论文库与笔记的本地命令行，供 agentero-dsh 插件调用。"
+    },
+    "agentero-dsh": {
+      "kind": "bundle",
+      "source": "https://github.com/poco-ai/agentero-dsh-plugin",
+      "summary": "把论文库、笔记、PDF 阅读接进 Harness。"
+    },
+    "agentero-dsh-plugin": {
+      "kind": "bundle",
+      "source": "https://github.com/poco-ai/agentero-dsh-plugin",
+      "summary": "把论文库、笔记、PDF 阅读接进 Harness。"
+    }
+  }
+}
