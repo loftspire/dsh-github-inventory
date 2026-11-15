@@ -120,5 +120,128 @@
 
 - `POST /api/github-inventory/check` → `{ ok, checkedAt, repos, newer, self, items }`
 - `POST /api/github-inventory/self-update` → `{ ok, files, backup, local, remote, restartRequired }`
+- `POST /api/github-inventory/restart` → `{ ok, restarting, hostPid, helper, log }`
 
 两条都只收 POST（GET 返 405）、只收回环同源请求（否则 403）。
+
+## 0.5.1 · 一键重启
+
+宿主侧没有官方重启接口：Electron 壳的 `app.relaunch()` 只出现在开发菜单项和崩溃恢复对话框里，preload 也没向渲染层暴露重启通道，插件侧更拿不到 Host→shell 的 IPC（`isDesktopHostEvent` 只认 9 种消息，没有 restart）。所以自己拼一条：
+
+`POST /api/github-inventory/restart` → 在 `os.tmpdir()` 写一个 `.cjs` 助手，用安装目录的 exe + `ELECTRON_RUN_AS_NODE=1` detached 起它，然后立刻回 HTTP（助手要先杀掉宿主，所以必须活在宿主之外）。
+
+助手环境变量：`GI_HOST_PID`（宿主自己）、`GI_EXE`（安装目录的 exe）、`GI_LOG`。宿主不知道自己上面还隔了几层，所以让助手自己往上走：
+
+1. 先等 800ms 让 HTTP 响应发出去；一条 `Get-CimInstance Win32_Process | ConvertTo-Json` 抓全表，从 `GI_HOST_PID` 沿 `ParentProcessId` 往上走（最多 12 层），取第一个「镜像路径 = `GI_EXE`、命令行里没有 `--type=`、也没有 `.asar`」的祖先进程当应用主进程；找不到就放弃（防止杀错进程）。
+2. `taskkill /PID <app>`（不带 `/F`，等于发 WM_CLOSE 请应用自己关窗），每 250ms 探活，最多 8 秒。
+3. 还在就 `taskkill /F /PID <app>`；随后把链上还在的 DSH 进程（宿主自己等）逐个 `/F`（不带 `/T`，否则会连带杀掉助手自己）。
+4. `spawn(exe, [], { detached: true })` 重新拉起，`unref()` 之后自删脚本。
+
+前端点按钮后轮询 `list` 探活：先看到断开、再看到恢复，就提示「已重启完成」并刷新页面。日志在 `%TEMP%\dsh-restart.log`。
+## 0.5.0 · 同一来源的打包成二级目录
+
+一级仍是类型（技能 / 命令行 / 插件包）。一级之下新增「二级目录」：同一上游仓库装进来的东西收成一个可折叠的分组行，点开才展开成员行。
+
+归类规则（`index.js` 的 `collectionOf`）：
+
+1. 同一仓库 ≥2 项 → 按仓库归组（`repo:owner/name`）；
+2. 否则同一前缀 ≥2 项、且类型相同 → 按前缀归组（`prefix:xxx`）；
+3. 都不满足 → 不归组，直接平铺。
+
+本机当前：23 个 `nature-*` 技能都来自 `Yuan1z0825/nature-skills`，因此合成「Nature 学术套件 · 23 项」一行，不再占 23 行。
+
+分组行显示：折叠箭头、组名、项数、组内「可更新 N」徽标。展开状态存在浏览器 `localStorage` 的 `gi-open-cols`，刷新后保持。
+
+搜索时全部自动展开（避免搜到的条目藏在折叠里）。
+
+兜底：若宿主的 `list` 响应里没有 `collection` 字段（host 还是旧代际，需要重启 DSH 才会加载新代码），前端按同一套规则自己算一遍，所以换新版 `client.js` 后只刷新页面即可看到分组，不必等重启。
+
+
+## 0.6.0 · 自更新不再「改一半」，失败原因不再被吞
+
+覆盖式更新此前的三个缺口，这一版都补上。
+
+### 原子化
+
+先把远端整棵树下载到 `~/.dsh/tmp/github-inventory-incoming-<时间戳>`，在暂存目录上校验。
+校验不过就整块丢弃，本地文件一个字节都不动 —— 不再出现「下了一半、覆盖了一半」的中间态。
+
+### 校验
+
+`package.json`、`index.js`、`client.js`、`cordis.patch.yml` 必须齐全；所有 `.json` 必须能解析；JS 文件不能为空。
+校验通过才备份、才覆盖；覆盖阶段任何一步出错，立刻用备份整目录还原并抛「更新失败，已用备份还原」。
+
+### 删残留
+
+覆盖完成后按远端文件清单删掉本地多出来的文件（返回值里的 `removed` 列出来），不再留孤儿模块。
+
+### 限流与失败不再被吞成「没有新版本」
+
+`githubApi` 现在读 `x-ratelimit-remaining`、`x-ratelimit-reset`、`x-ratelimit-limit` 三个头，
+header 缺失时不再误判为「剩 0」；返回值带 `reason`，区分 `rate-limit` / `timeout` / `network` / `http-<code>` / `not-found`。
+
+检查结果多出 `errors`、`errorSample`、`rateLimit`；面板顶部出现琥珀色提示条：
+
+- 被限流 → 「上次检查被 GitHub 限流了。HH:MM UTC 后恢复」
+- 有失败项 → 「上次检查有 N 项没查成。」+ 第一条失败原因
+- 两种都带「重新检查」按钮
+
+列表的 `counts` 也多一项 `failed`。
+
+### 测试进仓库
+
+`npm test` 跑 `tests/run.mjs`，三组共 52 个断言（list 17 / check 22 / guards 13），
+用假 ctx 注册路由 + mock fetch，跑在 `GI_TEST_BASE` 指定的临时根上，不碰真实技能目录、不联网。
+
+
+## 0.6.1 · 检查结果缓存 30 分钟
+
+以前每个页面刷新都想给 GitHub 打一遍请求：29 个条目按仓库归并后是 6 个，看着不多，但来回切设置页就会把 60 次/小时的匿名额度耗掉，界面上还看不出来。
+
+### 做法
+
+- 检查结果写进 `~/.dsh/github-inventory-checks.json` 时多存两个字段：`fingerprint` 与 `expiresAt`（30 分钟后）。
+- 不带 `force` 的请求命中未过期缓存，直接返回上次结果（响应里 `cached: true`），一个网络请求都不发。
+- 点「检查更新」按钮时前端发 `{ force: true }`，强制重查。
+- 缓存键不是时间，而是**条目指纹**：每个条目的 `key / version / source / deepLink` 拼起来取 sha256 前 16 位。装了个新技能、改了来源、升了本地版本，指纹就变，旧结论立刻作废，不会拿旧结果冒充当前状态。
+- `list` 也按指纹校验：指纹对不上就当作「还没查过」，列表不再挂 `update` 字段。
+
+### 失败结果只缓存 1 分钟
+
+限流或网络错误写进缓存时，`expiresAt` 只给 60 秒：错的结论不值得压半小时，用户点「重新检查」通常就在一分钟内。
+
+### 接口
+
+- `POST /api/github-inventory/check`，body 可选 `{ "force": true }`
+- 响应新增 `cached`（这次是不是读缓存）、`expiresAt`（缓存到期时间戳）
+
+### 测试
+
+新增 `tests/cache.test.mjs`：复用命中、force 穿透、指纹变化失效、失败结果短缓存。
+
+## 0.6.2 · 没有 Release 的仓库改用内容比对
+
+`api.github.com/repos/{repo}/releases/latest` 只对有发版的仓库有用。没有 Release 的仓库此前只能看
+`/commits?path=…` 的 SHA 变没变，而仓库里任何一个无关提交（改 README、发别的版本的 tag）都会让
+HEAD 变，导致这类条目永远显示「有新版本」。
+
+现在改为直接比对上游那个文件的内容：
+
+- **技能**：取 `raw.githubusercontent.com/<repo>/HEAD/<deepLink 子目录>/SKILL.md` 的内容 SHA-256，
+  与上次记录的基线比；内容变了才算更新。技能目录里没有 deepLink 时自动回落到原来的 commit 基线。
+- **其它（插件包、CLI 登记项）**：取仓库根 `package.json`，用 `compareSemver` 跟基线里的版本比。
+- 首次见到某条目（或来源仓库换了）时只记基线，状态是 `baseline`，不会因为「第一次查到」就报更新。
+- 取不到（404、超时、不是 JSON）一律返回 `null` 并回落到 commit 比对，所以旧行为不会被破坏。
+
+好处：SKILL.md 的内容指纹不随无关提交变化，也不占用 GitHub API 的 60 次/小时限流——
+`raw.githubusercontent.com` 是 CDN，不计入 API 配额。
+
+### 内容比对优先，限流也挡不住
+
+比对顺序是「先内容、后 API」：进循环第一件事就是取 `raw.githubusercontent.com` 的上游文件，
+取到了就直接下结论，**完全不碰 `api.github.com`**。所以即使未登录的 60 次/小时已经用光，
+29 个条目里也只剩真正取不到内容的少数几条会显示限流（实测：限流状态下 27 条仍照常判定）。
+
+技能的上游路径按顺序试：登记的子目录 → 仓库根 `SKILL.md` → `skills/<key>/SKILL.md`。
+这样「仓库根平铺的技能」（如 lieflat-less-ai-tone）和「skills/<name>/ 结构」（如 nature-*、
+本插件自己的 agent-desktop 技能）都能比到，不需要每条都手工登记子目录。

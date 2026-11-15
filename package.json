@@ -1,7 +1,10 @@
 {
   "name": "dsh-github-inventory",
-  "version": "0.4.0",
+  "version": "0.6.2",
   "type": "module",
+  "scripts": {
+    "test": "node tests/run.mjs"
+  },
   "description": "Lists tools installed from GitHub into this Harness, says what each one does, and switches skills on or off.",
   "license": "MIT",
   "repository": {
@@ -32,6 +35,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "docs",
+    "tests",
+    "RELEASE_NOTES.md",
     "icon.svg"
   ],
   "dsh": {

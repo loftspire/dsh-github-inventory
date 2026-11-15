@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
   border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); }
 .gi-btn:hover { background: var(--dsw-alias-interactive-bg-hover, #eceef0); }
 .gi-btn:disabled { opacity: .5; cursor: default; }
+.gi-btn[data-danger='true'] { color: #c4302b; border-color: rgba(196,48,43,.45); background: rgba(196,48,43,.07); }
 
 .gi-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 .gi-search { position: relative; flex: 1 1 220px; min-width: 160px; }
@@ -75,6 +76,17 @@ window.__ModuleLoader__.load({
 .gi-group-title span { font-weight: 400; color: var(--dsw-alias-label-tertiary, #8f959e); }
 .gi-card { border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); border-radius: 8px; overflow: hidden;
   background: var(--dsw-alias-bg-layer-1, #fff); }
+.gi-col { margin-bottom: 10px; }
+.gi-col-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 12px; cursor: pointer;
+  font: inherit; text-align: left; border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, #f7f8fa); color: var(--dsw-alias-label-primary, #1f2329);
+  transition: background .12s ease; }
+.gi-col-head:hover { background: var(--dsw-alias-interactive-bg-hover, #f2f4f7); }
+.gi-col-head[aria-expanded="true"] { border-radius: 8px 8px 0 0; }
+.gi-caret { width: 14px; color: var(--dsw-alias-label-tertiary, #8f959e); font-size: 11px; }
+.gi-col-name { font-weight: 600; font-size: 13px; }
+.gi-col-count { font-weight: 400; font-size: 12px; color: var(--dsw-alias-label-tertiary, #8f959e); }
+.gi-col .gi-card { border-radius: 0 0 8px 8px; border-top: none; }
 .gi-row { display: flex; gap: 14px; align-items: flex-start; padding: 12px 14px; cursor: pointer;
   transition: background .12s ease; outline: none; }
 .gi-row + .gi-row { border-top: 1px solid var(--dsw-alias-border-l1, #e5e6eb); }
@@ -171,6 +183,7 @@ window.__ModuleLoader__.load({
 .gi-chip.upd { color: var(--dsw-alias-state-success-primary, #2ea121); background: rgba(46,161,33,.1); }
 .gi-chip.upd b { color: var(--dsw-alias-state-success-primary, #2ea121); }
 .gi-banner.self { border-color: rgba(46,161,33,.45); background: rgba(46,161,33,.06); }
+.gi-banner.warn { border-color: rgba(214,150,0,.5); background: rgba(214,150,0,.08); }
 .gi-banner .gi-btn { margin-left: auto; flex: none; }
 .gi-upd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; line-height: 1.6;
   color: var(--dsw-alias-label-secondary, #646a73); }
@@ -367,18 +380,83 @@ window.__ModuleLoader__.load({
       )
     }
 
+    const COLLECTION_TITLES = { 'yuan1z0825/nature-skills': 'Nature 学术套件', office: 'Office 文档' }
+
+    function repoOf(url) {
+      const m = /github\.com\/([\w.-]+)\/([\w.-]+)/i.exec(String(url || ''))
+      return m ? (m[1] + '/' + m[2]).toLowerCase() : ''
+    }
+
+    /** 后端给了 collection 就用后端的；旧代际 host 没给时在前端按同样规则兜底算一次。 */
+    function collectionFor(item, pool) {
+      if (item.collection) return item.collection
+      const own = repoOf(item.source) || repoOf(item.repoUrl)
+      if (own) {
+        const same = pool.filter((x) => (repoOf(x.source) || repoOf(x.repoUrl)) === own)
+        if (same.length >= 2) {
+          return { id: 'repo:' + own, title: COLLECTION_TITLES[own] || own.split('/')[1] || own, size: same.length }
+        }
+      }
+      const prefix = String(item.key || '').split('-')[0]
+      if (prefix && prefix.length >= 4) {
+        const same = pool.filter(
+          (x) => x.kind === item.kind && (x.key === prefix || String(x.key || '').startsWith(prefix + '-')),
+        )
+        if (same.length >= 2) {
+          return { id: 'prefix:' + prefix.toLowerCase(), title: COLLECTION_TITLES[prefix.toLowerCase()] || prefix, size: same.length }
+        }
+      }
+      return null
+    }
+
     function Group(props) {
-      const { kind, items, busy, onToggle, onOpen, onStar } = props
+      const { kind, items, busy, onToggle, onOpen, onStar, openMap, onToggleGroup, forceOpen } = props
       if (items.length === 0) return null
+      const collections = []
+      const byId = new Map()
+      const singles = []
+      for (const item of items) {
+        const c = collectionFor(item, items)
+        if (c && c.id) {
+          if (!byId.has(c.id)) {
+            const entry = { id: c.id, title: c.title || c.id, items: [] }
+            byId.set(c.id, entry)
+            collections.push(entry)
+          }
+          byId.get(c.id).items.push(item)
+        } else {
+          singles.push(item)
+        }
+      }
+      collections.sort((a, b) => b.items.length - a.items.length)
+      const rowOf = (item) => h(Row, { key: item.id, item, busy, onToggle, onOpen, onStar })
       return h(
         'section',
         { className: 'gi-group' },
         h('h3', { className: 'gi-group-title' }, KIND_LABEL[kind] || kind, h('span', null, items.length + ' 项')),
-        h(
-          'div',
-          { className: 'gi-card' },
-          items.map((item) => h(Row, { key: item.id, item, busy, onToggle, onOpen, onStar })),
-        ),
+        collections.map((c) => {
+          const open = forceOpen || (openMap && openMap[c.id] === true)
+          const upd = c.items.filter((i) => i.update && i.update.state === 'newer').length
+          return h(
+            'div',
+            { className: 'gi-col', key: c.id },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'gi-col-head',
+                'aria-expanded': open ? 'true' : 'false',
+                onClick: () => onToggleGroup(c.id),
+              },
+              h('span', { className: 'gi-caret' }, open ? '▾' : '▸'),
+              h('span', { className: 'gi-col-name' }, c.title),
+              h('span', { className: 'gi-col-count' }, c.items.length + ' 项'),
+              upd ? h('span', { className: 'gi-badge upd' }, '可更新 ' + upd) : null,
+            ),
+            open ? h('div', { className: 'gi-card' }, c.items.map(rowOf)) : null,
+          )
+        }),
+        singles.length ? h('div', { className: 'gi-card' }, singles.map(rowOf)) : null,
       )
     }
 
@@ -630,6 +708,23 @@ window.__ModuleLoader__.load({
       return hay.includes(query)
     }
 
+    /** 重启期间探活：宿主回来后 list 立刻可用。 */
+    async function probeHost() {
+      try {
+        const response = await fetch('/api/github-inventory/list', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal:
+            typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined,
+        })
+        return response.ok
+      } catch (error) {
+        return false
+      }
+    }
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
     function Page() {
       useStyles()
       const [state, setState] = React.useState({ status: 'loading', data: null, error: '' })
@@ -642,6 +737,27 @@ window.__ModuleLoader__.load({
       const [sort, setSort] = React.useState('date')
       const [checkBusy, setCheckBusy] = React.useState(false)
       const [selfBusy, setSelfBusy] = React.useState(false)
+      const [restartArm, setRestartArm] = React.useState(false)
+      const [restartBusy, setRestartBusy] = React.useState(false)
+      const [restartPending, setRestartPending] = React.useState(false)
+      const [openCols, setOpenCols] = React.useState(() => {
+        try {
+          return JSON.parse(localStorage.getItem('gi-open-cols') || '{}') || {}
+        } catch (error) {
+          return {}
+        }
+      })
+      const toggleCol = React.useCallback((id) => {
+        setOpenCols((prev) => {
+          const next = { ...prev, [id]: prev[id] !== true }
+          try {
+            localStorage.setItem('gi-open-cols', JSON.stringify(next))
+          } catch (error) {
+            /* 隐私模式下不持久化 */
+          }
+          return next
+        })
+      }, [])
       const searchRef = React.useRef(null)
 
       const load = React.useCallback(async () => {
@@ -673,6 +789,12 @@ window.__ModuleLoader__.load({
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
       }, [])
+
+      React.useEffect(() => {
+        if (!restartArm) return undefined
+        const timer = setTimeout(() => setRestartArm(false), 8000)
+        return () => clearTimeout(timer)
+      }, [restartArm])
 
       const patchItem = React.useCallback((key, patch) => {
         setState((prev) =>
@@ -737,7 +859,12 @@ window.__ModuleLoader__.load({
         setCheckBusy(true)
         setNotice('')
         try {
-          const response = await fetch('/api/github-inventory/check', { method: 'POST', credentials: 'same-origin' })
+          const response = await fetch('/api/github-inventory/check', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ force: true }),
+          })
           const result = await response.json().catch(() => ({}))
           if (!response.ok || !result.ok) throw new Error(result.error || 'HTTP ' + response.status)
           await load()
@@ -760,8 +887,9 @@ window.__ModuleLoader__.load({
           const response = await fetch('/api/github-inventory/self-update', { method: 'POST', credentials: 'same-origin' })
           const result = await response.json().catch(() => ({}))
           if (!response.ok || !result.ok) throw new Error(result.error || 'HTTP ' + response.status)
+          setRestartPending(true)
           setNotice(
-            '插件已更新到 ' + (result.remote || '?') + '（写了 ' + result.files + ' 个文件，旧版备份在 ' + result.backup + '）。重启 DSH 后生效。',
+            '插件已更新到 ' + (result.remote || '?') + '（写了 ' + result.files + ' 个文件，旧版备份在 ' + result.backup + '）。宿主侧代码要重启 DSH 才换得上。',
           )
           await load()
         } catch (error) {
@@ -770,6 +898,48 @@ window.__ModuleLoader__.load({
           setSelfBusy(false)
         }
       }, [load])
+
+      const onRestart = React.useCallback(async () => {
+        if (restartBusy) return
+        setRestartArm(false)
+        setRestartPending(false)
+        setRestartBusy(true)
+        setNotice('正在重启 DSH…页面会短暂断开，回来后自动刷新。')
+        try {
+          const response = await fetch('/api/github-inventory/restart', { method: 'POST', credentials: 'same-origin' })
+          const result = await response.json().catch(() => ({}))
+          if (!response.ok || !result.ok) throw new Error(result.error || 'HTTP ' + response.status)
+        } catch (error) {
+          setRestartBusy(false)
+          setNotice('')
+          setState((prev) => ({ ...prev, error: '重启失败：' + String((error && error.message) || error) }))
+          return
+        }
+        const deadline = Date.now() + 90000
+        let sawDown = false
+        while (Date.now() < deadline) {
+          await sleep(800)
+          const up = await probeHost()
+          if (!up) {
+            sawDown = true
+            continue
+          }
+          if (sawDown) {
+            setRestartBusy(false)
+            setNotice('DSH 已重启完成，页面马上刷新。')
+            setTimeout(() => {
+              try {
+                window.location.reload()
+              } catch (error) {
+                /* 刷新失败就留在原地，数据已经能读 */
+              }
+            }, 900)
+            return
+          }
+        }
+        setRestartBusy(false)
+        setNotice('等了 90 秒也没等到 DSH 回来，可能启动失败了——请手动打开一次。')
+      }, [restartBusy])
 
       const data = state.data
       const items = (data && data.items) || []
@@ -835,6 +1005,25 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: { display: 'flex', gap: 8, flex: 'none' } },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'gi-btn',
+                'data-danger': restartArm ? 'true' : 'false',
+                onClick: () => {
+                  if (restartArm) {
+                    onRestart()
+                    return
+                  }
+                  setRestartArm(true)
+                  setNotice('重启会关掉当前所有会话，正在跑的对话与任务都会中断。再点一次「确认重启」继续。')
+                },
+                disabled: restartBusy,
+                title: '先请应用自己退出，退不掉再强制结束，然后自动重新打开',
+              },
+              restartBusy ? '重启中…' : restartArm ? '确认重启' : '重启 DSH',
+            ),
             h(
               'button',
               {
@@ -963,12 +1152,35 @@ window.__ModuleLoader__.load({
                 'div',
                 null,
                 h('b', null, '这个插件自身有新版本 ' + data.self.remote + '。'),
-                ' 当前 ' + data.self.local + '；更新会先整目录备份，再用仓库 main 分支的文件覆盖，重启 DSH 后生效。',
+                ' 当前 ' + data.self.local + '；更新会先整目录备份，再用仓库 main 分支的文件覆盖，更新完会给出「立即重启」。',
               ),
               h(
                 'button',
                 { type: 'button', className: 'gi-btn', onClick: onSelfUpdate, disabled: selfBusy },
                 selfBusy ? '更新中…' : '更新插件',
+              ),
+            )
+          : null,
+        data && (data.rateLimit || (data.counts && data.counts.failed > 0))
+          ? h(
+              'div',
+              { className: 'gi-banner warn' },
+              h(
+                'div',
+                null,
+                data.rateLimit
+                  ? h('b', null, '上次检查被 GitHub 限流了。')
+                  : h('b', null, '上次检查有 ' + data.counts.failed + ' 项没查成。'),
+                data.rateLimit
+                  ? ' 未登录时每小时只能查 60 次' +
+                    (data.rateLimit.resetAt ? '，' + data.rateLimit.resetAt.slice(11, 16) + ' UTC 后恢复' : '') +
+                    '。没查到的条目会停在「未知」，不代表没有新版。'
+                  : ' ' + (data.checkErrorSample || ''),
+              ),
+              h(
+                'button',
+                { type: 'button', className: 'gi-btn', onClick: onCheck, disabled: checkBusy },
+                checkBusy ? '检查中…' : '重新检查',
               ),
             )
           : null,
@@ -978,6 +1190,23 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'gi-status', style: { textAlign: 'left', padding: '10px 14px', marginBottom: '12px' } },
               notice,
+            )
+          : null,
+        restartPending
+          ? h(
+              'div',
+              { className: 'gi-banner self' },
+              h(
+                'div',
+                null,
+                h('b', null, '插件文件已经就位，重启 DSH 才会加载新代码。'),
+                ' 重启会中断当前会话与正在跑的任务。',
+              ),
+              h(
+                'button',
+                { type: 'button', className: 'gi-btn', onClick: onRestart, disabled: restartBusy },
+                restartBusy ? '重启中…' : '立即重启',
+              ),
             )
           : null,
         state.status === 'loading'
@@ -1014,6 +1243,9 @@ window.__ModuleLoader__.load({
                     onToggle,
                     onOpen: setSelected,
                     onStar,
+                    openMap: openCols,
+                    onToggleGroup: toggleCol,
+                    forceOpen: Boolean(q),
                   }),
                   h(Group, {
                     kind: 'cli',
@@ -1022,6 +1254,9 @@ window.__ModuleLoader__.load({
                     onToggle,
                     onOpen: setSelected,
                     onStar,
+                    openMap: openCols,
+                    onToggleGroup: toggleCol,
+                    forceOpen: Boolean(q),
                   }),
                   h(Group, {
                     kind: 'bundle',
@@ -1030,6 +1265,9 @@ window.__ModuleLoader__.load({
                     onToggle,
                     onOpen: setSelected,
                     onStar,
+                    openMap: openCols,
+                    onToggleGroup: toggleCol,
+                    forceOpen: Boolean(q),
                   }),
                 ),
         h(
