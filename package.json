@@ -1,6 +1,6 @@
 {
   "name": "dsh-github-inventory",
-  "version": "0.6.6",
+  "version": "0.9.6",
   "type": "module",
   "scripts": {
     "test": "node tests/run.mjs"

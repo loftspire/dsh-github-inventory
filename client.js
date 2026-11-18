@@ -108,6 +108,24 @@ window.__ModuleLoader__.load({
 .gi-col-name { font-weight: 600; font-size: 13px; }
 .gi-col-count { font-weight: 400; font-size: 12px; color: var(--dsw-alias-label-tertiary, #8f959e); }
 .gi-col .gi-card { border-radius: 0 0 8px 8px; border-top: none; }
+
+.gi-btn-primary { border-color: var(--dsw-alias-brand-primary, #3370ff); color: var(--dsw-alias-brand-primary, #3370ff); }
+.gi-btn-primary:hover:not(:disabled) { background: var(--dsw-alias-brand-primary, #3370ff); color: var(--dsw-alias-fg-on-accent, #fff); }
+.gi-error { border: 1px solid var(--dsw-alias-state-error-primary, #d93026); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.gi-error-title { font-size: 14px; font-weight: 600; color: var(--dsw-alias-state-error-primary, #d93026); }
+.gi-error-body { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-secondary, #666); white-space: pre-wrap; word-break: break-all; }
+.gi-tasks { position: sticky; bottom: 0; margin-top: 12px; border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 -2px 12px rgba(0,0,0,.06); }
+.gi-tasks-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2, #f2f3f5); }
+.gi-tasks-title { font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary, #1d2129); }
+.gi-tasks-count { font-size: 11px; color: var(--dsw-alias-label-secondary, #86909c); flex: 1; }
+.gi-tasks-tip { padding: 6px 12px; font-size: 11px; color: var(--dsw-alias-label-secondary, #86909c); border-bottom: 1px solid var(--dsw-alias-border-l2, #f2f3f5); }
+.gi-tasks-list { max-height: 180px; overflow: auto; padding: 4px 0; }
+.gi-task { display: flex; align-items: center; gap: 10px; padding: 4px 12px; font-size: 12px; }
+.gi-task-name { color: var(--dsw-alias-label-primary, #1d2129); }
+.gi-task-status { flex: 1; text-align: right; color: var(--dsw-alias-label-secondary, #86909c); font-size: 11px; }
+.gi-task-error .gi-task-status { color: var(--dsw-alias-state-error-primary, #d93026); }
+.gi-task-confirm .gi-task-status { color: var(--dsw-alias-state-warning-primary, #b8860b); }
+.gi-task-done .gi-task-status { color: var(--dsw-alias-state-success-primary, #00a870); }
 .gi-row { display: flex; gap: 14px; align-items: flex-start; padding: 12px 14px; cursor: pointer;
   transition: background .12s ease; outline: none; }
 .gi-row + .gi-row { border-top: 1px solid var(--dsw-alias-border-l1, #e5e6eb); }
@@ -185,7 +203,11 @@ window.__ModuleLoader__.load({
   padding: 8px 10px; border-radius: 6px; word-break: break-all;
   color: var(--dsw-alias-label-secondary, #646a73); background: var(--dsw-alias-bg-layer-2, #f5f6f7);
   border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); }
-.gi-kv { display: grid; grid-template-columns: 76px 1fr; gap: 6px 10px; font-size: 12px; }
+.gi-hist { display: grid; gap: 4px; font-size: 12px; }
+    .gi-hist-row { display: flex; gap: 8px; align-items: baseline; }
+    .gi-hist-at { color: var(--dsw-alias-label-tertiary, #8f959e); flex: none; font-variant-numeric: tabular-nums; }
+    .gi-hist-detail { color: var(--dsw-alias-label-primary, #1f2329); word-break: break-all; }
+    .gi-kv { display: grid; grid-template-columns: 76px 1fr; gap: 6px 10px; font-size: 12px; }
 .gi-kv .k { color: var(--dsw-alias-label-tertiary, #8f959e); }
 .gi-kv .v { color: var(--dsw-alias-label-primary, #1f2329); word-break: break-all; }
 .gi-modal-foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
@@ -206,6 +228,19 @@ window.__ModuleLoader__.load({
 .gi-banner.self { border-color: rgba(46,161,33,.45); background: rgba(46,161,33,.06); }
 .gi-banner.warn { border-color: rgba(214,150,0,.5); background: rgba(214,150,0,.08); }
 .gi-banner .gi-btn { margin-left: auto; flex: none; }
+.gi-mask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 18, 24, .28); }
+.gi-modal { width: 100%; max-width: 560px; max-height: 82vh; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; border-radius: 12px; border: 1px solid var(--dsw-alias-border-l1, #e5e6eb); background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 18px 48px rgba(0, 0, 0, .18); font-size: 12px; line-height: 1.6; }
+.gi-modal b { font-size: 13px; color: var(--dsw-alias-label-primary, #1f2329); }
+.gi-note { margin-top: 6px; padding: 8px 10px; border-radius: 6px; background: var(--dsw-alias-bg-layer-2); max-height: 210px; overflow: auto; }
+.gi-note-head { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+.gi-note-head code { font-size: 11px; padding: 1px 5px; border-radius: 4px; background: var(--dsw-alias-bg-layer-3); }
+.gi-note-date { margin-left: auto; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+.gi-note-body { margin: 0; font: inherit; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; color: var(--dsw-alias-label-secondary); }
+.gi-note-empty { font-size: 11.5px; color: var(--dsw-alias-label-tertiary); }
+.gi-note-files { margin-top: 6px; font-size: 11px; line-height: 1.7; color: var(--dsw-alias-label-tertiary); }
+.gi-more { color: var(--dsw-alias-label-tertiary); }
+.gi-btn-mini { height: 22px; padding: 0 9px; font-size: 11px; border-radius: 5px; }
+.gi-row .gi-btn-mini { margin-right: 2px; }
 .gi-upd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; line-height: 1.6;
   color: var(--dsw-alias-label-secondary, #646a73); }
 .gi-upd .ok { color: var(--dsw-alias-state-success-primary, #2ea121); }
@@ -337,7 +372,7 @@ function StatChip(props) {
 }
 
 function Row(props) {
-      const { item, busy, onToggle, onOpen, onStar } = props
+      const { item, busy, onToggle, onOpen, onStar, onUpdate } = props
       const meta = []
       if (item.installedAt) meta.push(item.installedAt)
       if (item.root) meta.push(item.root)
@@ -392,6 +427,22 @@ function Row(props) {
         h(
           'div',
           { className: 'gi-side' },
+          item.kind === 'skill' && item.update && item.update.state === 'newer'
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'gi-btn gi-btn-mini',
+                  disabled: busy === 'update:' + item.key,
+                  title: item.update.note || '从上游拉最新版覆盖这个技能',
+                  onClick: (event) => {
+                    event.stopPropagation()
+                    if (onUpdate) onUpdate(item)
+                  },
+                },
+                busy === 'update:' + item.key ? '更新中…' : '更新',
+              )
+            : null,
           h(Star, { on: Boolean(item.favorite), busy: busy === 'star:' + item.key, onClick: () => onStar(item) }),
           jump
             ? h(
@@ -448,7 +499,7 @@ function Row(props) {
     }
 
     function Group(props) {
-      const { kind, items, busy, onToggle, onOpen, onStar, openMap, onToggleGroup, forceOpen } = props
+      const { kind, items, busy, onToggle, onOpen, onStar, onUpdate, openMap, onToggleGroup, forceOpen } = props
       if (items.length === 0) return null
       const collections = []
       const byId = new Map()
@@ -467,7 +518,7 @@ function Row(props) {
         }
       }
       collections.sort((a, b) => b.items.length - a.items.length)
-      const rowOf = (item) => h(Row, { key: item.id, item, busy, onToggle, onOpen, onStar })
+      const rowOf = (item) => h(Row, { key: item.id, item, busy, onToggle, onOpen, onStar, onUpdate })
       return h(
         'section',
         { className: 'gi-group' },
@@ -499,11 +550,13 @@ function Row(props) {
     }
 
     function Detail(props) {
-      const { item, onClose, onStar, onToggle, busy, onSaved } = props
+      const { item, onClose, onStar, onToggle, busy, onSaved, history } = props
       const [copied, setCopied] = React.useState('')
       const [srcInput, setSrcInput] = React.useState('')
       const [srcMsg, setSrcMsg] = React.useState('')
       const [srcBusy, setSrcBusy] = React.useState(false)
+  const [rbBusy, setRbBusy] = React.useState(false)
+  const [rbMsg, setRbMsg] = React.useState('')
 
       React.useEffect(() => {
         const onKey = (event) => {
@@ -624,6 +677,25 @@ function Row(props) {
                 ]),
               ),
             ),
+            Array.isArray(history) && history.length
+              ? h(
+                  'div',
+                  { className: 'gi-block' },
+                  h('div', { className: 'gi-label' }, '最近'),
+                  h(
+                    'div',
+                    { className: 'gi-hist' },
+                    history.map((event, index) =>
+                      h(
+                        'div',
+                        { className: 'gi-hist-row', key: index },
+                        h('span', { className: 'gi-hist-at' }, whenText(event.at)),
+                        h('span', { className: 'gi-hist-detail' }, event.detail || event.kind || ''),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
             item.provenance === 'unknown' || item.provenance === 'inferred'
               ? h(
                   'div',
@@ -692,6 +764,7 @@ function Row(props) {
                     ),
                   ),
                   srcMsg ? h('div', { className: 'gi-hint' }, srcMsg) : null,
+                  rbMsg ? h('div', { className: 'gi-hint' }, rbMsg) : null,
                 )
               : null,
             item.location
@@ -736,6 +809,39 @@ function Row(props) {
                   copied || '复制本地路径',
                 )
               : null,
+            item.kind === 'skill'
+              ? h(
+                  'button',
+                  {
+                    className: 'gi-secondary',
+                    type: 'button',
+                    disabled: rbBusy,
+                    onClick: async () => {
+                      setRbBusy(true)
+                      try {
+                        const res = await fetch('/api/github-inventory/rollback', {
+                          method: 'POST',
+                          credentials: 'same-origin',
+                          headers: { 'content-type': 'application/json' },
+                          body: JSON.stringify({ key: item.key }),
+                        })
+                        const body = await res.json().catch(() => ({}))
+                        setRbMsg(
+                          res.ok
+                            ? '已回滚到 ' + (body.restored || '上次备份')
+                            : '回滚没成功：' + (body.error || String(res.status)),
+                        )
+                        if (res.ok && onSaved) onSaved({ key: item.key, update: { state: 'current', note: '已回滚到备份' } })
+                      } catch (error) {
+                        setRbMsg('回滚没成功：' + String(error && error.message ? error.message : error))
+                      } finally {
+                        setRbBusy(false)
+                      }
+                    },
+                  },
+                  rbBusy ? '回滚中…' : '回滚到上次备份',
+                )
+              : null,
             h(
               'button',
               {
@@ -763,7 +869,62 @@ function Row(props) {
       )
     }
 
+    function updateHeadline(state) {
+  const plan = state.plan || {}
+  const total = (plan.changed || 0) + (plan.added || 0) + (plan.removed || 0)
+  if (total === 0) return '已经是最新，没有文件需要改。'
+  const parts = []
+  if (plan.changed) parts.push('改 ' + plan.changed + ' 个')
+  if (plan.added) parts.push('新增 ' + plan.added + ' 个')
+  if (plan.removed) parts.push('删 ' + plan.removed + ' 个')
+  return parts.join(' · ') + ' 文件'
+}
+
+function updateNotes(state) {
+  const info = state.info || {}
+  const commit = info.commit
+  const notes = info.notes
+  const head = commit
+    ? h(
+        'div',
+        { className: 'gi-note-head' },
+        h('code', null, commit.sha || ''),
+        h('span', null, ' ' + (commit.message || '（无提交信息）')),
+        commit.date ? h('span', { className: 'gi-note-date' }, String(commit.date).slice(0, 10)) : null,
+      )
+    : null
+  const body = notes
+    ? h('pre', { className: 'gi-note-body' }, notes.text)
+    : h('div', { className: 'gi-note-empty' }, '上游没有 CHANGELOG 之类的更新说明，只能看提交信息和文件清单。')
+  return h('div', { className: 'gi-note' }, head, body)
+}
+
+function updateFiles(state) {
+  const fileList = state.files || {}
+  const names = []
+  for (const file of Array.isArray(fileList.changed) ? fileList.changed : []) names.push('修改 ' + file)
+  for (const file of Array.isArray(fileList.added) ? fileList.added : []) names.push('新增 ' + file)
+  for (const file of Array.isArray(fileList.removed) ? fileList.removed : []) names.push('删除 ' + file)
+  if (names.length === 0) return null
+  const shown = names.slice(0, 8)
+  return h(
+    'div',
+    { className: 'gi-note-files' },
+    shown.map((line) => h('div', { key: line }, line)),
+    names.length > shown.length ? h('div', { className: 'gi-more' }, '还有 ' + (names.length - shown.length) + ' 个文件') : null,
+  )
+}
+
+function whenText(at) {
+      if (!at) return ''
+      const date = new Date(at)
+      if (Number.isNaN(date.getTime())) return at
+      const pad = (n) => String(n).padStart(2, '0')
+      return date.getMonth() + 1 + '月' + date.getDate() + '日 ' + pad(date.getHours()) + ':' + pad(date.getMinutes())
+    }
+
     function updateLabel(u) {
+  if (u && u.state === 'local') return '本地自写'
       if (!u) return ''
       const when = u.checkedAt ? new Date(u.checkedAt).toLocaleString('zh-CN') : ''
       if (u.state === 'newer') {
@@ -805,6 +966,94 @@ function Row(props) {
 
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+    /** 渲染兜底：任何一个子组件抛错时显示错误卡片，而不是整页白掉。 */
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { error: null }
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error }
+      }
+
+      componentDidCatch(error) {
+        try {
+          console.error('[github-inventory] 渲染出错', error)
+        } catch (ignored) {
+          /* 控制台不可用也继续 */
+        }
+      }
+
+      render() {
+        const error = this.state && this.state.error
+        if (error) {
+          return h(
+            'div',
+            { className: 'gi-error' },
+            h('div', { className: 'gi-error-title' }, '这个页面渲染出错了'),
+            h('div', { className: 'gi-error-body' }, String((error && error.message) || error)),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'gi-btn',
+                onClick: () => {
+                  try {
+                    window.location.reload()
+                  } catch (ignored) {
+                    /* 忽略 */
+                  }
+                },
+              },
+              '刷新页面',
+            ),
+          )
+        }
+        return this.props.children
+      }
+    }
+
+    function taskPanel(tasks, queueBusy, onClear, onHide) {
+      const total = tasks.length
+      const completed = tasks.filter((t) => t.status === 'done' || t.status === 'error' || t.status === 'confirm').length
+      const running = tasks.find((t) => t.status === 'running')
+      const head = queueBusy
+        ? '正在更新 ' + Math.min(completed + 1, total) + '/' + total
+        : '任务完成 ' + completed + '/' + total
+      return h(
+        'div',
+        { className: 'gi-tasks' },
+        h(
+          'div',
+          { className: 'gi-tasks-head' },
+          h('span', { className: 'gi-tasks-title' }, '更新任务'),
+          h('span', { className: 'gi-tasks-count' }, head),
+          h(
+            'button',
+            { type: 'button', className: 'gi-btn-mini', onClick: onClear, disabled: queueBusy },
+            '清空已完成',
+          ),
+          h('button', { type: 'button', className: 'gi-btn-mini', onClick: onHide }, '收起'),
+        ),
+        running
+          ? h('div', { className: 'gi-tasks-tip' }, '可离开本页面，进度会继续；回到这一页能看到结果。')
+          : null,
+        h(
+          'div',
+          { className: 'gi-tasks-list' },
+          tasks.map((task) =>
+            h(
+              'div',
+              { key: task.key, className: 'gi-task gi-task-' + task.status },
+              h('span', { className: 'gi-task-name' }, task.title || task.key),
+              h('span', { className: 'gi-task-status' }, task.text),
+            ),
+          ),
+        ),
+      )
+    }
+
     function Page() {
       useStyles()
       const [state, setState] = React.useState({ status: 'loading', data: null, error: '' })
@@ -816,6 +1065,10 @@ function Row(props) {
       const [status, setStatus] = React.useState('all')
       const [sort, setSort] = React.useState('date')
       const [checkBusy, setCheckBusy] = React.useState(false)
+      const [confirmUpdate, setConfirmUpdate] = React.useState(null)
+      const [tasks, setTasks] = React.useState([])
+      const [showTasks, setShowTasks] = React.useState(false)
+      const [queueBusy, setQueueBusy] = React.useState(false)
       const [selfBusy, setSelfBusy] = React.useState(false)
       const [restartArm, setRestartArm] = React.useState(false)
       const [restartBusy, setRestartBusy] = React.useState(false)
@@ -847,8 +1100,33 @@ function Row(props) {
           if (!response.ok) throw new Error('HTTP ' + response.status)
           const data = await response.json()
           setState({ status: 'ready', data, error: '' })
+          return data
         } catch (error) {
           setState((prev) => ({ ...prev, status: 'error', error: String((error && error.message) || error) }))
+        }
+      }, [])
+
+      const autoPreviewRef = React.useRef('')
+      const previewFirst = React.useCallback(async (data) => {
+        if (!data || !Array.isArray(data.items)) return
+        const target = data.items.find((entry) => entry && entry.kind === 'skill' && entry.update && entry.update.state === 'newer')
+        if (!target) return
+        const stamp = String(target.key + ':' + ((target.update && (target.update.latestTag || target.update.sha)) || ''))
+        if (autoPreviewRef.current === stamp) return
+        autoPreviewRef.current = stamp
+        try {
+          const response = await fetch('/api/github-inventory/update-item', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ key: target.key, preview: true }),
+          })
+          if (!response.ok) return
+          const result = await response.json().catch(() => ({}))
+          if (!result || !result.ok) return
+          setConfirmUpdate({ item: target, plan: result.plan || {}, info: result.info || null })
+        } catch (error) {
+          /* 预览失败不打扰用户，点「更新」时还会再试一次 */
         }
       }, [])
 
@@ -947,7 +1225,8 @@ function Row(props) {
           })
           const result = await response.json().catch(() => ({}))
           if (!response.ok || !result.ok) throw new Error(result.error || 'HTTP ' + response.status)
-          await load()
+          const fresh = await load()
+          if (fresh && fresh.counts && fresh.counts.updatable > 0) await previewFirst(fresh)
           setNotice(
             result.newer
               ? '检查完成：' + result.newer + ' 项有新版本（查了 ' + result.repos + ' 个仓库，' + new Date(result.checkedAt).toLocaleTimeString('zh-CN') + '）'
@@ -958,7 +1237,171 @@ function Row(props) {
         } finally {
           setCheckBusy(false)
         }
-      }, [load])
+      }, [load, previewFirst])
+
+      // 进页面就自动查一次：宿主侧有 30 分钟指纹缓存，命中时几乎零成本
+      React.useEffect(() => {
+        let alive = true
+        const run = async () => {
+          try {
+            const response = await fetch('/api/github-inventory/check', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: '{}',
+            })
+            if (!response.ok || !alive) return
+            const result = await response.json().catch(() => ({}))
+            if (!result.ok) return
+            const data = await load()
+            if (alive && data) previewFirst(data)
+          } catch (error) {
+            /* 自动检查失败不打扰用户，顶部会有黄条说明 */
+          }
+        }
+        run()
+        return () => {
+          alive = false
+        }
+      }, [load, previewFirst])
+
+      const onUpdate = React.useCallback(
+        async (item, apply) => {
+          setBusy('update:' + item.key)
+          setNotice('')
+          setState((prev) => ({ ...prev, error: '' }))
+          try {
+            const response = await fetch('/api/github-inventory/update-item', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ key: item.key, preview: apply !== true, force: apply === true }),
+            })
+            const result = await response.json().catch(() => ({}))
+            if (!response.ok && !result.needConfirm) throw new Error(result.error || 'HTTP ' + response.status)
+            if (apply !== true || result.needConfirm) {
+              setConfirmUpdate({ item, plan: result.plan || {}, info: result.info || null })
+              return
+            }
+            if (!result.ok) throw new Error(result.error || '更新失败')
+            setConfirmUpdate(null)
+            const stamped = result.versionUpdated && result.version ? '，版本记为 ' + result.version : ''
+            if (result.upToDate) {
+              setNotice('「' + (item.title || item.key) + '」已经是最新，没有文件需要改' + stamped + '。')
+            } else {
+              const at = result.info && result.info.commit && result.info.commit.sha ? '到 ' + result.info.commit.sha + ' ' : ''
+              setNotice(
+                '「' + (item.title || item.key) + '」已更新' + at + '：写入 ' + result.written + ' 个文件' +
+                  (result.removed ? '、删除 ' + result.removed + ' 个残留' : '') +
+                  stamped +
+                  '（旧版备份在 ' + result.backup + '）',
+              )
+            }
+            try {
+              await fetch('/api/github-inventory/check', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+              })
+            } catch (error) {
+              /* 忽略 */
+            }
+            await load()
+          } catch (error) {
+            setState((prev) => ({ ...prev, error: '更新失败：' + String((error && error.message) || error) }))
+          } finally {
+            setBusy('')
+          }
+        },
+        [load],
+      )
+
+      const runOne = React.useCallback(async (item) => {
+        const mark = (patch) =>
+          setTasks((prev) => prev.map((task) => (task.key === item.key ? { ...task, ...patch } : task)))
+        mark({ status: 'running', text: '正在检查上游' })
+        try {
+          const pre = await fetch('/api/github-inventory/update-item', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ key: item.key, preview: true }),
+          })
+          const plan = await pre.json().catch(() => ({}))
+          if (!pre.ok) throw new Error(plan.error || 'HTTP ' + pre.status)
+          const risky = plan.plan && (plan.plan.localEditedCount > 0 || (plan.plan.noBaseline && plan.plan.changed > 0))
+          if (risky) {
+            mark({ status: 'confirm', text: '本地有改动，需要你单独确认' })
+            return 'confirm'
+          }
+          if (plan.upToDate) {
+            mark({ status: 'done', text: '已经是最新' })
+            return 'done'
+          }
+          mark({ text: '正在写入文件' })
+          const done = await fetch('/api/github-inventory/update-item', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ key: item.key, force: true }),
+          })
+          const result = await done.json().catch(() => ({}))
+          if (!done.ok || !result.ok) throw new Error(result.error || 'HTTP ' + done.status)
+          mark({
+            status: 'done',
+            text:
+              '写入 ' + result.written + ' 个文件' + (result.removed ? '，删除 ' + result.removed + ' 个残留' : ''),
+          })
+          return 'done'
+        } catch (error) {
+          mark({ status: 'error', text: String((error && error.message) || error) })
+          return 'error'
+        }
+      }, [])
+
+      const updateAll = React.useCallback(async () => {
+        if (queueBusy) return
+        const list = (state.data && state.data.items) || []
+        const targets = list.filter(
+          (item) => item.kind === 'skill' && item.update && item.update.state === 'newer',
+        )
+        if (targets.length === 0) {
+          setNotice('现在没有可更新的技能。')
+          return
+        }
+        setQueueBusy(true)
+        setShowTasks(true)
+        setNotice('')
+        setState((prev) => ({ ...prev, error: '' }))
+        setTasks(targets.map((item) => ({ key: item.key, title: item.title || item.key, status: 'queued', text: '排队中' })))
+        let done = 0
+        let need = 0
+        let failed = 0
+        for (const item of targets) {
+          const result = await runOne(item)
+          if (result === 'done') done += 1
+          else if (result === 'confirm') need += 1
+          else failed += 1
+        }
+        setQueueBusy(false)
+        try {
+          await fetch('/api/github-inventory/check', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: '{"force":true}',
+          })
+        } catch (error) {
+          /* 忽略 */
+        }
+        await load()
+        setNotice(
+          '全部更新完成：成功 ' + done + ' 项' +
+            (need ? '，' + need + ' 项等你确认' : '') +
+            (failed ? '，' + failed + ' 项失败' : ''),
+        )
+      }, [state.data, queueBusy, runOne, load])
 
       const onSelfUpdate = React.useCallback(async () => {
         setSelfBusy(true)
@@ -1116,6 +1559,19 @@ function Row(props) {
               'button',
               {
                 type: 'button',
+                className: 'gi-btn gi-btn-primary',
+                onClick: updateAll,
+                disabled: queueBusy || !(data && data.counts && data.counts.updatable > 0),
+                title: '把当前所有有新版本的技能排进队列，一个个更新',
+              },
+              queueBusy
+                ? '更新中…'
+                : '全部更新' + (data && data.counts && data.counts.updatable ? ' (' + data.counts.updatable + ')' : ''),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
                 className: 'gi-btn',
                 onClick: onCheck,
                 disabled: checkBusy || state.status === 'loading',
@@ -1130,6 +1586,9 @@ function Row(props) {
             ),
           ),
         ),
+        tasks.length > 0 && showTasks
+          ? taskPanel(tasks, queueBusy, () => setTasks((prev) => prev.filter((t) => t.status === 'running')), () => setShowTasks(false))
+          : null,
         data
           ? h(
               'div',
@@ -1254,6 +1713,113 @@ function Row(props) {
               ),
             )
           : null,
+        confirmUpdate
+          ? h(
+              'div',
+              { className: 'gi-mask', onClick: () => setConfirmUpdate(null) },
+              h(
+                'div',
+                { className: 'gi-modal', onClick: (event) => event.stopPropagation() },
+              h(
+                'div',
+                null,
+                h(
+                  'b',
+                  null,
+                  confirmUpdate.plan &&
+                    (confirmUpdate.plan.added || 0) + (confirmUpdate.plan.changed || 0) + (confirmUpdate.plan.removed || 0) === 0
+                    ? '「' + (confirmUpdate.item.title || confirmUpdate.item.key) + '」内容和本地一致'
+                    : '「' + (confirmUpdate.item.title || confirmUpdate.item.key) + '」这次会改这些',
+                ),
+                h('div', null, updateHeadline(confirmUpdate)),
+                updateNotes(confirmUpdate),
+                updateFiles(confirmUpdate),
+                confirmUpdate.info && confirmUpdate.info.fresh
+                  ? h(
+                      'div',
+                      { className: 'gi-hint' },
+                      '上游 ' +
+                        (confirmUpdate.info.refKind === 'tag' && confirmUpdate.info.refVersion
+                          ? 'v' + confirmUpdate.info.refVersion
+                          : '最新提交') +
+                        ' 是 ' +
+                        confirmUpdate.info.fresh.hours +
+                        ' 小时前刚发布的——现在装还是再等等，由你决定。',
+                    )
+                  : null,
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', gap: '6px', marginLeft: 'auto', flex: 'none' } },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'gi-btn',
+                    onClick: () => {
+                      const pending = confirmUpdate
+                      setConfirmUpdate(null)
+                      const plan = (pending && pending.plan) || {}
+                      const empty = (plan.added || 0) + (plan.changed || 0) + (plan.removed || 0) === 0
+                      if (!empty && pending) onUpdate(pending.item, true)
+                      else if (empty) load()
+                    },
+                  },
+                  confirmUpdate.plan &&
+                    (confirmUpdate.plan.added || 0) + (confirmUpdate.plan.changed || 0) + (confirmUpdate.plan.removed || 0) === 0
+                    ? '知道了'
+                    : confirmUpdate.plan && confirmUpdate.plan.localEditedCount > 0
+                      ? '仍然更新'
+                      : '更新',
+                ),
+                h(
+                  'button',
+                  { type: 'button', className: 'gi-btn', onClick: () => setConfirmUpdate(null) },
+                  '取消',
+                ),
+              ),
+              ),
+            )
+          : null,
+        data && Array.isArray(data.tasks) && data.tasks.some((task) => task && task.status === 'running')
+          ? h(
+              'div',
+              { className: 'gi-banner warn' },
+              h(
+                'div',
+                null,
+                h('b', null, '有一项更新还没跑完'),
+                h(
+                  'div',
+                  null,
+                  '「' +
+                    ((data.tasks.find((task) => task && task.status === 'running') || {}).key || '') +
+                    '」正在进行；如果它其实已经中断，点右侧「清除记录」，再用详情里的「回滚到上次备份」还原。',
+                ),
+              ),
+              h(
+                'div',
+                { style: { marginLeft: 'auto', flex: 'none' } },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'gi-btn',
+                    onClick: async () => {
+                      await fetch('/api/github-inventory/tasks', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify({ action: 'clear' }),
+                      }).catch(() => {})
+                      await load()
+                    },
+                  },
+                  '清除记录',
+                ),
+              ),
+            )
+          : null,
         data && (data.rateLimit || (data.counts && data.counts.failed > 0))
           ? h(
               'div',
@@ -1336,6 +1902,7 @@ function Row(props) {
                     onToggle,
                     onOpen: setSelected,
                     onStar,
+                    onUpdate,
                     openMap: openCols,
                     onToggleGroup: toggleCol,
                     forceOpen: Boolean(q),
@@ -1347,6 +1914,7 @@ function Row(props) {
                     onToggle,
                     onOpen: setSelected,
                     onStar,
+                    onUpdate,
                     openMap: openCols,
                     onToggleGroup: toggleCol,
                     forceOpen: Boolean(q),
@@ -1358,6 +1926,7 @@ function Row(props) {
                     onToggle,
                     onOpen: setSelected,
                     onStar,
+                    onUpdate,
                     openMap: openCols,
                     onToggleGroup: toggleCol,
                     forceOpen: Boolean(q),
@@ -1381,6 +1950,7 @@ function Row(props) {
                 load()
               },
               busy,
+              history: (data && data.history && data.history[selected.key]) || [],
             })
           : null,
       )
@@ -1392,7 +1962,9 @@ function Row(props) {
         ctx.slots.inject('settings.section', () =>
           ctx.slots.register(
             { name: 'settings.section', id: 'github-inventory', order: 56, label: '本地扩展清单' },
-            Page,
+            function GuardedPage(props) {
+              return h(ErrorBoundary, null, h(Page, props || {}))
+            },
           ),
         )
       },

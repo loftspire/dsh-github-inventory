@@ -3,6 +3,51 @@
 设置页里的「GitHub 下载」一页：把从 GitHub 装进这台机器的技能、命令行工具、插件包列成一张表，
 每项写清「它能干什么」「来自哪个仓库」「装在哪」，技能还给一个开关。
 
+## 0.9.6 · 版本号跟着实际内容走
+
+- 症状：更新完（或上游内容其实一直一致）后，列表里的版本号仍是安装那天填的旧值，例如 `tavotto-figure` 永远写 `v0.19.2`。
+- 原因：`buildSkillItem` 的 `version` 只读登记表 `version` 字段，而更新流程只写文件与 `.dsh-source.json`，从不回写登记表。
+- 修法：`updateItem` 在「写入成功」与「内容已一致」两条分支上都会算出上游实际版本——有 release tag 就是 `v<tag>`，只有分支就是 `HEAD@<短 sha>`——并回写登记表里**已存在**的条目（纯本地技能不凭空造条目）。返回值多了 `version` / `versionUpdated`。
+
+## 0.9.5 · 检查与更新共用一套上游定位
+
+- 症状：「可更新 0.21.2」的徽标常在，点更新却提示「内容和本地一致」——检查走的是 `contentCompare`（只试根目录 `SKILL.md` 与 `skills/<key>/SKILL.md`），更新走的是 `upstreamDir`（还会试 `codex-plugin/skills/<key>`、仓库树里任意 `*/skills/<key>`、frontmatter name、登记表 `dir`）。
+- 两条路径候选不一致，Tavotto 这类把技能放在 `codex-plugin/skills/` 的仓库就会永远「有新版本」。
+- 修法：`contentCompare` 的技能分支先走同样的候选清单（含 `codex-plugin/skills/<key>`），仍未命中则调用 `upstreamDir` 拿真实目录与 ref 再取 `SKILL.md`；两者都不成，才回落到 release 版本比对。
+
+## 0.9.4 · 改动预览改成居中弹层
+
+- 「更新前先看改动」原来是页内一条黄色横条，会挤在列表上方、看起来像盖住了内容；现在改成居中弹层：半透明遮罩 + 卡片（最大 560px、最高 82vh、内容可滚动），点遮罩或「取消」即关，不再占列表位置。
+- 弹层里依次是：标题、改动统计、「上游说明」、「会改动的文件」、（可选）「上游 X 小时前刚发布」提示，底部「知道了 / 仍然更新 / 更新」与「取消」。
+
+## 0.9.3 · 结论与动作对齐
+
+- **「可以更新」和「已是最新」不再同时出现**：预览算出 `added + changed + removed === 0` 时，`updateItem` 会调 `markCurrent(key, '内容和本地一致')` 把检查结果里该条目改成 `current`，徽标与计数随下一次列表刷新消失；确认条那一栏改为「内容和本地一致」，按钮变成「知道了」，点了只关面板并刷新列表，不再发更新请求。
+- **僵尸任务会自己降级**：`readTasks()` 把超过 30 分钟的 `running` 标成 `interrupted`（不再是「正在跑」）；`recordTask` 在同一条目成功后清掉它的 `running / interrupted` 旧记录。界面只在真有 `running` 时提示，并给「清除记录」（`POST /api/github-inventory/tasks`）。
+- **先看改动再决定**：进页面自动检查 / 手动「检查更新」完成后，`previewFirst(data)` 自动为第一个可更新技能拉一次预览（`preview: true`，不写盘），把「会改哪些文件 + 上游说明 + 版本锚点」直接摊在页面上；同一 key+版本只自动弹一次，避免打扰。
+
+## 0.9.2 · 版本锚点、24 小时提示、任务留痕与回滚
+
+- **版本锚点**：`resolveUpstreamRef(repo)` 先问 `/releases/latest`。有 Release 就把 `ref` 钉在 tag 上（`raw.githubusercontent.com/<repo>/<tag>/…`、`git/trees/<tag>`），同一次更新永远取同一份内容；没有 Release 才回落到 `HEAD`，并在界面上标出来。基线 `.dsh-source.json` 里新增 `ref / refKind / refVersion`，下次能看出当初是从哪个 tag 装的。
+- **24 小时提示（只提示不阻断）**：`freshOf(publishedAt)` 算出距发布的小时数，`< 24` 时随预览一起返回 `info.fresh`；确认条多一行「上游 v0.21.2 是 3.4 小时前刚发布的——现在装还是再等等，由你决定」。装不装仍由使用者点按钮决定，没有发布年龄门挡路。
+- **任务留痕**：`~/.dsh/github-inventory-tasks.json` 记每次更新的开始 / 成功 / 失败（`status: running | done | failed`，上限 40 条），列表响应带最近 20 条。宿主中途被杀时那条 `running` 会留在文件里，下次打开页面顶部出现「上次有更新没跑完」的提示。
+- **一键回滚**：`POST /api/github-inventory/rollback {key}` —— 取 `~/.dsh/backups/skills/<key>-<时间戳>` 里最新的一份，先把当前目录挪到 `backups/skills-rollback/`，再整目录换回去；失败时把挪走的原样放回。返回 `{restored, parked, backups}`。详情卡里技能条目多了「回滚到上次备份」按钮。
+- 新增接口：`POST /api/github-inventory/rollback`。`__internals` 增加 `rollbackItem / listSkillBackups / readTasks / resolveUpstreamRef / freshOf` 便于测试。
+
+## 0.9.1 · 详情卡里有「最近」了
+
+每次真正写入更新，host 往 `~/.dsh/github-inventory-history.json` 追加一条，最多留 200 条；列表响应带 `history`（每个条目最近 5 条），详情卡底部显示成「8月3日 18:20 · 写入 9 个文件，删除 0 个」。
+
+- `POST /api/github-inventory/history`：`{keys:[...]}` 取子集，`{action:'clear'}` 清空；只接受回环 + POST。
+- 记录失败不影响更新本身。
+
+## 0.9.0 · 更新前后盯住 profile 清单
+
+- `snapshotProfile()`：更新前把 profile 的 `package.json` 里 `bundles` 与 `dependencies` 存进 `~/.dsh/github-inventory-profile.json`。
+- `profileDrift()`：与快照比对，得出少掉的 bundle、少掉的依赖，以及「清单里有但磁盘上没有」的包，附在列表响应 `profile` 字段。
+- `POST /api/github-inventory/profile`：`{action:'drift'|'snapshot'|'repair'}`；`repair` 先备份 `package.json`，再把缺失的 bundle 行写回（临时文件 + rename）。
+- profile 目录取 `DSH_PROFILE_DIR`，否则 `~/.dsh/profiles/<DSH_PROFILE|desktop>`。
+
 ## 它扫什么
 
 | 来源 | 说明 |
@@ -283,6 +328,33 @@ HEAD 变，导致这类条目永远显示「有新版本」。
 显示名同时从「GitHub 下载」改为 **本地扩展清单**（`locale/*.json` 的 `meta.title`、
 设置页入口、页面标题一起改），简介写明它做什么，英文侧是 `Local extensions`。
 
+## 0.7.0 · 进页面就能看见谁有新版本，点一下就更新
+
+0.6.x 只能告诉你「有更新」，真正覆盖文件要自己动手。0.7.0 把它做成了按钮，并且不再需要每次进来手动点「检查更新」。
+
+### 打开就查
+
+`Page` 挂载后自动 `POST /api/github-inventory/check`（body 为 `{}`，不带 force）。宿主侧有 30 分钟指纹缓存，命中时不发一个网络请求，所以重复进页面是免费的；只有缓存过期或清单变了才真去拉。查完自动 `load()`，行内绿色「可更新 x.y.z」徽标直接出现。
+
+### 单条更新怎么做的
+
+`POST /api/github-inventory/update-item`（body `{ key, force }`）：
+
+1. `repoTree(repo)` 取上游文件清单（`git/trees/HEAD?recursive=1`，成功结果缓存 10 分钟）；
+2. `upstreamDir(item)` 定位子目录：先看 `deepLink` 里的 `/tree/<branch>/<path>`，再看 `skills/<key>`，都没有就认为仓库根就是技能本身；
+3. 逐个文件走 `raw.githubusercontent.com/<repo>/HEAD/<path>` 下载（CDN，不占 API 配额），算 sha256 与本地比对，得出 added / changed / removed / unchanged；
+4. 有本地改动（manifest 里记录的 sha 与当前文件不符）或没有安装基线时，先返回 `needConfirm: true` 和计划摘要，界面弹黄条让你确认；确认后带 `force: true` 再调一次；
+5. `applySkillUpdate` 先把整个技能目录备份到 `~/.dsh/backups/skills/<key>-<时间戳>`，再写新增与变更、删上游已删的、补写 `.dsh-source.json`；中途出错则删目录并从备份还原。
+
+`.dsh-source.json` 是这次新增的安装基线：`{ repo, dir, at, files: { 相对路径: sha256 } }`。没有它就只能靠「文件序号」猜，判断不出哪些是你改过的。
+
+### 边界
+
+- 只有技能能一键更新。插件包归 profile 的 pnpm 管，CLI 归各自 release 管，插件不去碰。
+- 停用的技能（在 `~/.dsh/skills-disabled`）不允许更新，先启用。
+- 上游的仓库元数据（`.gitignore`、`.github/`、`node_modules/`、点开头的文件）一律跳过：它们不是技能内容，也不该被删。
+- 抓不到的文件（网络抖动）不算失败：重试两次仍失败就跳过并计入 `plan.unreadable`，不会让整次更新回滚。
+
 ## 0.6.6 · 修「只杀掉、不重开」
 
 重启助手自己是被 `ELECTRON_RUN_AS_NODE=1` 拉起来的（借宿主 exe 当 node 用），
@@ -298,3 +370,35 @@ HEAD 变，导致这类条目永远显示「有新版本」。
 
 判断是否修好：点一次「重启 DSH」，看 `%TEMP%\dsh-restart.log` 末几行——
 成功只会有 `relaunched pid=`，不该出现 `relaunch exited early`。
+
+## 0.7.1 · 更新前先看说明
+
+点「更新」不再直接写盘，改成两段式：
+
+1. 第一段 `POST /api/github-inventory/update-item`（`preview: true`）——只算计划、不写文件，同时抓上游的更新说明与最近一次提交。
+2. 面板显示「改 N 个 · 新增 N 个 · 删 N 个」、上游 `CHANGELOG.md` 之类的第一个小节、以及最近提交的 sha 与标题。
+3. 用户点「更新」才真正执行（`force: true`）。
+
+说明从哪来：按 `CHANGELOG.md`、`CHANGELOG.en.md`、`CHANGELOG`、`RELEASE_NOTES.md`、`NEWS.md`、`HISTORY.md` 的顺序，取仓库里第一个存在的文件，截前 1600 字。上游没有这些文件时，退回到最近一次提交的标题（`GET /repos/{repo}/commits?path=<dir>&per_page=1`）。两者都拿不到，面板会明确写「上游没有 CHANGELOG 之类的更新说明」，不会留空。
+
+## 0.8.1 · 找得到上游目录，也读得到 token
+
+- `readToken()` 多了一个来源：`~/.dsh/secrets/*.token`（取第一个非 `#` 开头、非空的行）。这样把 PAT 放在仓库外也能用，不必写进环境变量。
+- `buildSkillItem` 输出 `dirHint`（登记表 `dir` 或随包目录 `path`），`upstreamDir` 把它排进候选首位。
+- `upstreamDir` 新增「按 SKILL.md frontmatter 的 `name` 猜目录」兜底：遍历仓库树里所有 `SKILL.md`（最多 12 个），挑 `name === key`、`name` 以 `key-` 开头、`key` 以 `name-` 开头或 `name` 含 `key` 的那个。Tavotto 那种把技能塞在 `codex-plugin/skills/` 下面的仓库因此能被找到。
+- 找不到上游目录时，不再退化成「整个仓库当技能」去逐个下载；只有仓库根目录本身有 `SKILL.md` 且文件数 ≤ 400 才这么干，否则直接报「上游没找到 <key> 这个技能目录」。
+
+## 0.8.2 · 本地自写的技能，别跟上游比
+
+有些技能不是从某个仓库装来的——比如 `rea`，仓库里是工具本体，本地的技能正文是手写的。这类条目以前会被判「上游没找到」或者被上游内容覆盖。
+
+- 登记表或随包目录里给条目加 `"noUpdate": true`，列表项就会带 `noUpdate` 标记。
+- 检查更新时这类条目直接记为 `state: "local"`、说明「本地自写，不跟上游比对」，不发任何请求。
+- 行内徽标显示灰色的「本地自写」，不出现「更新」按钮。
+
+## 0.8.0 · 一次更新好几个，出错也不再白屏
+
+- **全部更新**：工具栏新增按钮（带可更新数量），把当前所有「有新版本」的技能排进队列，一个接一个跑。每项先做一次预览（只读，不写盘），本地有改动或缺基线的项直接跳过并在队列里标「需要你单独确认」，其余自动写入。
+- **任务面板**：更新期间页面底部浮出任务条，显示「正在更新 3/5」「更新 task-queue / 正在写入文件」，并写明「可离开本页面，进度会继续；回到这一页能看到结果」。可清空已完成、可收起。
+- **渲染兜底**：整个设置页包在 `ErrorBoundary` 里。任何渲染期异常都会显示错误卡片（标题、错误信息、刷新页面按钮），不再是一整片空白。
+- 修复：`updateAll` 在 `const items` 声明之前引用它，触发 `Cannot access 'items' before initialization`（TDZ）导致整页白屏，改为从 `state.data.items` 取。

@@ -6,6 +6,7 @@
  * 与 ~/.dsh/skills-disabled 之间搬动），其余只读展示。
  */
 import { readFile, writeFile, mkdir, readdir, stat, rename, cp, rm } from 'node:fs/promises'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import os from 'node:os'
@@ -312,6 +313,8 @@ async function buildSkillItem(key, dir, rootId, rootLabel, enabled, md, entry, s
     source: prov.source,
     downloadUrl: prov.downloadUrl,
     deepLink: prov.deepLink,
+    dirHint: String((entry && entry.dir) || (cat && cat.path) || ''),
+    noUpdate: Boolean((entry && entry.noUpdate) || (cat && cat.noUpdate)),
     provenance: prov.level,
     provenanceLabel: PROVENANCE_LABELS[prov.level] || prov.level,
     version: entry?.version || '',
@@ -530,6 +533,8 @@ async function buildList() {
       failed: linked.filter((i) => i.update?.state === 'error').length,
     },
     self: checks?.self || null,
+    profile: await profileDrift(),
+    history: await historyFor(linked.map((i) => i.key)),
     checksAt: checks?.checkedAt || '',
     rateLimit: checks?.rateLimit || null,
     checkErrorSample: checks?.errorSample || '',
@@ -630,7 +635,20 @@ function pathFromDeepLink(deepLink) {
 }
 
 function readToken() {
-  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ''
+  const fromEnv = process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+  if (fromEnv) return String(fromEnv).trim()
+  // 长期复用的 token 放在 ~/.dsh/secrets/<repo>.token（仓库外、不给 git）
+  try {
+    const dir = path.join(DSH_HOME, 'secrets')
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.token')) continue
+      const text = readFileSync(path.join(dir, name), 'utf8').trim()
+      if (text && !text.startsWith('#')) return text
+    }
+  } catch (error) {
+    /* 没有 secrets 目录就退回匿名（限流 60 次/小时） */
+  }
+  return ''
 }
 
 function semverOf(text) {
@@ -738,14 +756,28 @@ async function contentCompare(item, repo) {
   if (!repo) return null
   if (item.kind === 'skill') {
     const rel = pathFromDeepLink(item.deepLink)
-    // 候选路径：登记了子目录就先看它；否则按「仓库根 SKILL.md」→「skills/<key>/SKILL.md」依次试，
-    // 这样仓库根上放的技能和 Nature 那种 skills/<name>/ 结构都能比到。
-    const candidates = rel ? [rel + '/SKILL.md'] : ['SKILL.md', 'skills/' + item.key + '/SKILL.md']
+    const key = item.key
+    // 候选路径必须和「真正更新时用的 upstreamDir」一致，否则会出现
+    //「检查说可更新、点更新又说没改动」这种自相矛盾。
+    const candidates = []
+    if (rel) candidates.push(rel + '/SKILL.md')
+    candidates.push('SKILL.md', 'skills/' + key + '/SKILL.md', 'codex-plugin/skills/' + key + '/SKILL.md')
     for (const candidate of candidates) {
       const remote = await rawGet(rawUrl(repo, candidate))
       if (remote.ok && remote.text) {
         return { mode: 'content', sha: sha256(remote.text), artifact: candidate }
       }
+    }
+    // 仍然没命中就交给 upstreamDir：它会按仓库树、frontmatter name、dirHint 找真正的目录
+    try {
+      const up = await upstreamDir(item)
+      const artifact = up.dir ? up.dir + '/SKILL.md' : 'SKILL.md'
+      const remote = await rawGet(rawUrlIn(repo, up.dir, 'SKILL.md', up.ref))
+      if (remote.ok && remote.text) {
+        return { mode: 'content', sha: sha256(remote.text), artifact, dir: up.dir }
+      }
+    } catch {
+      /* 找不到就当没法用内容判断，回落到版本比对 */
     }
     return null
   }
@@ -759,6 +791,488 @@ async function contentCompare(item, repo) {
   }
   if (!remoteVersion) return null
   return { mode: 'version', version: remoteVersion, artifact: 'package.json' }
+}
+
+// ---- 单条更新：技能从上游目录整棵覆盖，先算差异再动手 ----
+const API_UPDATE = '/api/github-inventory/update-item'
+const API_PROFILE = '/api/github-inventory/profile'
+const API_HISTORY = '/api/github-inventory/history'
+const MANIFEST_NAME = '.dsh-source.json'
+const UPDATE_SKIP = ['.git/', '.github/', 'node_modules/', '.vscode/', '.idea/', '.DS_Store']
+const TREE_CACHE = new Map()
+
+async function sha256File(file) {
+  const buf = await readFile(file)
+  return createHash('sha256').update(buf).digest('hex')
+}
+
+async function readManifest(dir) {
+  try {
+    const parsed = JSON.parse(await readFile(path.join(dir, MANIFEST_NAME), 'utf8'))
+    return parsed && parsed.files && typeof parsed.files === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function rawUrlIn(repo, dir, rel, ref) {
+  const joined = [dir, rel].filter(Boolean).join('/')
+  const at = ref || 'HEAD'
+  return RAW_BASE + '/' + repo + '/' + at + '/' + joined.split('/').map((seg) => encodeURIComponent(seg)).join('/')
+}
+
+async function rawBytes(url) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 20000)
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { 'user-agent': 'dsh-github-inventory' } })
+    if (!res.ok) return { ok: false, status: res.status }
+    const buf =
+      typeof res.arrayBuffer === 'function'
+        ? Buffer.from(await res.arrayBuffer())
+        : Buffer.from(await res.text(), 'utf8')
+    return { ok: true, status: res.status, buf }
+  } catch (error) {
+    const timedOut = error && (error.name === 'AbortError' || /timeout|aborted/i.test(String(error.message || '')))
+    return { ok: false, status: 0, reason: timedOut ? 'timeout' : 'network' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function repoTree(repo, ref) {
+  const at = ref || 'HEAD'
+  const cacheKey = repo + '@' + at
+  const hit = TREE_CACHE.get(cacheKey)
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.tree
+  const res = await githubApi('/repos/' + repo + '/git/trees/' + at + '?recursive=1')
+  if (!res.ok) throw new Error(describeApiError(res))
+  const tree = (res.json && res.json.tree ? res.json.tree : []).filter((entry) => entry.type === 'blob')
+  TREE_CACHE.set(cacheKey, { at: Date.now(), tree })
+  TREE_CACHE.set(repo, { at: Date.now(), tree })
+  return tree
+}
+
+// 版本锚点：有 Release 就钉在 tag 上（同一次更新永远取同一份内容），没有才退回 HEAD
+const REF_CACHE = new Map()
+
+async function resolveUpstreamRef(repo) {
+  const hit = REF_CACHE.get(repo)
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.rev
+  let rev = { ref: 'HEAD', refKind: 'branch', refVersion: '', publishedAt: '', releaseName: '' }
+  const rel = await githubApi('/repos/' + repo + '/releases/latest')
+  if (rel.ok && rel.json && rel.json.tag_name) {
+    const tag = String(rel.json.tag_name)
+    rev = {
+      ref: tag,
+      refKind: 'tag',
+      refVersion: tag.replace(/^v/i, ''),
+      publishedAt: String(rel.json.published_at || rel.json.created_at || ''),
+      releaseName: String(rel.json.name || tag),
+    }
+  } else {
+    const commits = await githubApi('/repos/' + repo + '/commits?per_page=1')
+    if (commits.ok && Array.isArray(commits.json) && commits.json.length > 0) {
+      const first = commits.json[0]
+      rev.publishedAt = String((first.commit && first.commit.author && first.commit.author.date) || '')
+    }
+  }
+  REF_CACHE.set(repo, { at: Date.now(), rev })
+  return rev
+}
+
+function isUpstreamNoise(filePath) {
+  if (UPDATE_SKIP.some((skip) => filePath === skip || filePath.startsWith(skip.replace(/\/$/, '') + '/'))) return true
+  const text = String(filePath)
+  // 编译缓存与字节码不是「上游删了」，不该被当成要清理的残留
+  if (text.includes('__pycache__/') || /\.(pyc|pyo|pyd)$/i.test(text)) return true
+  return text.split('/').some((segment) => segment.startsWith('.'))
+}
+
+async function upstreamDir(item) {
+  const repo = repoFromSource(item.source)
+  if (!repo) throw new Error('这个条目没有可识别的仓库地址，先给它补一个来源')
+  const rev = await resolveUpstreamRef(repo)
+  const tree = await repoTree(repo, rev.ref)
+  const wanted = pathFromDeepLink(item.deepLink)
+  const key = item.key
+  const candidates = []
+  const hint = String(item.dirHint || '').replace(/^[\/]+|[\/]+$/g, '')
+  // 登记表里显式写了 dir 就以它为准（技能目录名和条目名不一致时唯一可靠的办法）
+  if (hint) candidates.push(hint)
+  if (wanted) candidates.push(wanted)
+  candidates.push('skills/' + key, 'codex-plugin/skills/' + key)
+  // 兜底：树里任何以 /skills/<key> 结尾的目录（仓库可能把技能放在子项目下）
+  for (const entry of tree) {
+    const parts = entry.path.split('/')
+    if (parts.length >= 2 && parts[parts.length - 1] === key && parts[parts.length - 2] === 'skills') {
+      const dir = parts.slice(0, -1).join('/')
+      if (!candidates.includes(dir)) candidates.push(dir)
+    }
+  }
+  const hasSkillFile = (dir) => tree.some((entry) => entry.path === (dir ? dir + '/SKILL.md' : 'SKILL.md'))
+  let dir0 = ''
+  let files0 = []
+  let dir = ''
+  let files = []
+  for (const candidate of candidates) {
+    if (!hasSkillFile(candidate)) continue
+    const list = tree.filter(
+      (entry) =>
+        (entry.path === candidate || entry.path.startsWith(candidate + '/')) && !isUpstreamNoise(entry.path),
+    )
+    if (list.length === 0) continue
+    dir = candidate
+    files = list
+    break
+  }
+  if (files.length === 0) {
+    // 还找不到就按 SKILL.md 的 frontmatter name 猜：目录名和条目名经常不一致
+    const skillFiles = tree.filter((entry) => entry.path === 'SKILL.md' || entry.path.endsWith('/SKILL.md'))
+    for (const entry of skillFiles.slice(0, 12)) {
+      const dir = entry.path === 'SKILL.md' ? '' : entry.path.slice(0, -'/SKILL.md'.length)
+      if (candidates.includes(dir)) continue
+      const head = await rawGet(rawUrlIn(repo, dir, 'SKILL.md', rev.ref))
+      if (!head.ok) continue
+      const matched = /^name:\s*(.+)$/m.exec(head.text.slice(0, 800))
+      const name = matched ? matched[1].trim().replace(/^["']|["']$/g, '') : ''
+      if (!name) continue
+      if (name === key || name.startsWith(key + '-') || key.startsWith(name + '-') || name.includes(key)) {
+        const list = tree.filter(
+          (row) => (row.path === dir || row.path.startsWith(dir ? dir + '/' : '')) && !isUpstreamNoise(row.path),
+        )
+        if (list.length > 0 && list.length <= 400) {
+          dir0 = dir
+          files0 = list
+          break
+        }
+      }
+    }
+  }
+  if (files0.length > 0) {
+    dir = dir0
+    files = files0
+  }
+  if (files.length === 0 && hasSkillFile('')) {
+    // 仓库根就是技能本身（lieflat 这种平铺的）
+    files = tree.filter((entry) => !isUpstreamNoise(entry.path))
+    dir = ''
+  }
+  if (files.length === 0) {
+    throw new Error('上游没找到 ' + key + ' 这个技能目录（仓库里没有对应的 SKILL.md）')
+  }
+  if (files.length > 400) {
+    throw new Error('上游目录有 ' + files.length + ' 个文件，不像一个技能，已停止（请手动确认路径）')
+  }
+  const rebase = (p) => (dir && p.startsWith(dir + '/') ? p.slice(dir.length + 1) : p)
+  return {
+    repo,
+    dir,
+    files: files.map((entry) => ({ rel: rebase(entry.path), size: entry.size })),
+    ref: rev.ref,
+    refKind: rev.refKind,
+    refVersion: rev.refVersion,
+    publishedAt: rev.publishedAt,
+    releaseName: rev.releaseName,
+  }
+}
+
+async function planSkillUpdate(item) {
+  const up = await upstreamDir(item)
+  const localList = await listLocalFiles(item.location).catch(() => [])
+  const localSet = new Set(localList)
+  const manifest = await readManifest(item.location)
+  const known = manifest ? manifest.files : null
+  const plan = { added: [], changed: [], removed: [], localEdited: [], unchanged: 0, noBaseline: !known }
+
+  const unreadable = []
+  for (const file of up.files) {
+    const url = rawUrlIn(up.repo, up.dir, file.rel, up.ref)
+    let got = await rawBytes(url)
+    if (!got.ok && got.reason === 'network') {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      got = await rawBytes(url)
+    }
+    if (!got.ok) {
+      unreadable.push(file.rel)
+      continue
+    }
+    file.buf = got.buf
+    file.remoteSha = createHash('sha256').update(got.buf).digest('hex')
+    if (!localSet.has(file.rel)) {
+      plan.added.push(file)
+      continue
+    }
+    const localSha = await sha256File(path.join(item.location, ...file.rel.split('/')))
+    if (localSha === file.remoteSha) {
+      plan.unchanged += 1
+      continue
+    }
+    plan.changed.push(file)
+    if (known && known[file.rel] && known[file.rel] !== localSha) plan.localEdited.push(file.rel)
+  }
+
+  const upstreamSet = new Set(up.files.map((file) => file.rel))
+  for (const rel of localList) {
+    if (rel === MANIFEST_NAME) continue
+    if (isUpstreamNoise(rel)) continue
+    if (upstreamSet.has(rel)) continue
+    plan.removed.push(rel)
+    if (known && known[rel]) {
+      const localSha = await sha256File(path.join(item.location, ...rel.split('/'))).catch(() => '')
+      if (localSha && known[rel] !== localSha) plan.localEdited.push(rel)
+    }
+  }
+  plan.unreadable = unreadable
+  return { up, plan }
+}
+
+function summarizePlan(plan) {
+  return {
+    added: plan.added.length,
+    changed: plan.changed.length,
+    removed: plan.removed.length,
+    unchanged: plan.unchanged,
+    total: plan.added.length + plan.changed.length + plan.unchanged,
+    localEdited: plan.localEdited.slice(0, 20),
+    localEditedCount: plan.localEdited.length,
+    noBaseline: plan.noBaseline,
+  }
+}
+
+async function applySkillUpdate(item, up, plan) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backup = path.join(DSH_HOME, 'backups', 'skills', item.key + '-' + stamp)
+  await mkdir(path.dirname(backup), { recursive: true })
+  await cp(item.location, backup, { recursive: true })
+
+  let written = 0
+  try {
+    for (const file of [...plan.added, ...plan.changed]) {
+      const abs = path.join(item.location, ...file.rel.split('/'))
+      await mkdir(path.dirname(abs), { recursive: true })
+      await writeFile(abs, file.buf)
+      written += 1
+    }
+    let removed = 0
+    for (const rel of plan.removed) {
+      await rm(path.join(item.location, ...rel.split('/')), { force: true })
+      removed += 1
+    }
+    const files = {}
+    for (const file of up.files) files[file.rel] = file.remoteSha
+    await writeFile(
+      path.join(item.location, MANIFEST_NAME),
+      JSON.stringify(
+        { repo: up.repo, dir: up.dir, ref: up.ref, refKind: up.refKind, refVersion: up.refVersion, at: new Date().toISOString(), files },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    )
+    return { backup, written, removed }
+  } catch (error) {
+    await rm(item.location, { recursive: true, force: true }).catch(() => {})
+    await cp(backup, item.location, { recursive: true }).catch(() => {})
+    throw new Error('更新失败，已用备份还原：' + String(error && error.message ? error.message : error))
+  }
+}
+
+const NOTES_CANDIDATES = ['CHANGELOG.md', 'CHANGELOG.en.md', 'CHANGELOG', 'RELEASE_NOTES.md', 'NEWS.md', 'HISTORY.md']
+
+async function upstreamNotes(repo, dir, ref) {
+  for (const name of NOTES_CANDIDATES) {
+    const got = await rawGet(rawUrlIn(repo, dir, name, ref))
+    if (!got.ok || !got.text) continue
+    const lines = String(got.text).split(String.fromCharCode(10))
+    const start = lines.findIndex((line) => /^##\s+/.test(line))
+    const from = start >= 0 ? start : 0
+    const chunk = []
+    for (let i = from; i < lines.length; i += 1) {
+      if (i > from && /^##\s+/.test(lines[i])) break
+      chunk.push(lines[i])
+      if (chunk.join(String.fromCharCode(10)).length > 1600) break
+    }
+    const section = chunk.join(String.fromCharCode(10)).trim()
+    if (section) return { file: (dir ? dir + '/' : '') + name, text: section.slice(0, 1600) }
+  }
+  return null
+}
+
+async function latestCommit(repo, dir) {
+  const query = dir ? '?path=' + encodeURIComponent(dir) + '&per_page=1' : '?per_page=1'
+  const res = await githubApi('/repos/' + repo + '/commits' + query)
+  if (!res.ok || !Array.isArray(res.json) || res.json.length === 0) return null
+  const first = res.json[0] || {}
+  const commit = first.commit || {}
+  return {
+    sha: String(first.sha || '').slice(0, 7),
+    date: String((commit.author && commit.author.date) || ''),
+    message: String(commit.message || '').split(String.fromCharCode(10))[0].slice(0, 200),
+  }
+}
+
+function freshOf(publishedAt) {
+  const at = Date.parse(String(publishedAt || ''))
+  if (!Number.isFinite(at)) return null
+  const hours = (Date.now() - at) / 3600000
+  if (hours < 0 || hours > 24) return null
+  return { hours: Math.round(hours * 10) / 10, at: new Date(at).toISOString() }
+}
+
+async function updatePreview(up) {
+  const commit = await latestCommit(up.repo, up.dir).catch(() => null)
+  const notes = await upstreamNotes(up.repo, up.dir, up.ref).catch(() => null)
+  return {
+    repo: up.repo,
+    dir: up.dir,
+    commit,
+    notes,
+    ref: up.ref,
+    refKind: up.refKind,
+    refVersion: up.refVersion,
+    publishedAt: up.publishedAt,
+    // 24 小时内刚发布只提示，不拦：要不要现在就更新由使用者决定
+    fresh: freshOf(up.publishedAt),
+  }
+}
+
+function filesOf(plan) {
+  const pick = (value) => (Array.isArray(value) ? value.slice(0, 200) : [])
+  return { changed: pick(plan.changed), added: pick(plan.added), removed: pick(plan.removed) }
+}
+
+const BRANCH_CACHE = new Map()
+
+async function defaultBranchOf(repo) {
+  const hit = BRANCH_CACHE.get(repo)
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.branch
+  const res = await githubApi('/repos/' + repo)
+  const branch = res.ok && res.json && res.json.default_branch ? String(res.json.default_branch) : 'main'
+  BRANCH_CACHE.set(repo, { at: Date.now(), branch })
+  return branch
+}
+
+async function headShaOf(repo) {
+  const res = await githubApi('/repos/' + repo + '/commits?per_page=1')
+  if (!res.ok) return ''
+  const sha = Array.isArray(res.json) && res.json[0] ? String(res.json[0].sha || '') : ''
+  return sha ? sha.slice(0, 7) : ''
+}
+
+// 「实际装上的上游版本」：有 release tag 就用 v<tag>，否则沿用登记表既有写法 <分支>@<短 sha>
+async function installedVersionOf(up) {
+  if (up.refKind === 'tag' && up.refVersion) return 'v' + up.refVersion
+  const sha = await headShaOf(up.repo)
+  if (!sha) return ''
+  const branch = await defaultBranchOf(up.repo)
+  return branch + '@' + sha
+}
+
+// 只更新已有登记条目；没有登记条目的（纯本地技能）不凭空造一条
+async function writeRegistryVersion(key, version) {
+  const clean = String(version || '').trim()
+  if (!clean) return ''
+  const registry = await readJsonFile(REGISTRY_FILE, { items: [] })
+  if (!Array.isArray(registry.items)) return ''
+  const entry = registry.items.find((row) => row && row.key === key)
+  if (!entry || entry.version === clean) return ''
+  entry.version = clean
+  entry.installedAt = new Date().toISOString().slice(0, 10)
+  await writeJsonFile(REGISTRY_FILE, registry)
+  return clean
+}
+
+async function updateItem(key, force, preview) {
+  const list = await buildList()
+  const item = (list.items || []).find((entry) => entry.key === key)
+  if (!item) throw new Error('没有这个条目：' + key)
+  if (item.kind !== 'skill') throw new Error('只有技能支持直接更新；' + KIND_LABELS[item.kind] + ' 请到下载页手动安装')
+  if (!item.enabled) throw new Error('这个技能已停用，先启用再更新')
+  const { up, plan } = await planSkillUpdate(item)
+  const summary = summarizePlan(plan)
+  const info = await updatePreview(up)
+  const empty = summary.added + summary.changed + summary.removed === 0
+  if (preview === true) {
+    return { ok: true, preview: true, key, upToDate: empty, plan: summary, info, files: filesOf(plan) }
+  }
+  if (empty) {
+    // 内容与上游一致时，顺便把登记表里的版本对齐到上游——否则列表永远显示当年装的旧版本号
+    const same = await installedVersionOf(up)
+    const fixed = await writeRegistryVersion(key, same)
+    await markCurrent(key, '内容和本地一致')
+    return {
+      ok: true,
+      key,
+      upToDate: true,
+      plan: summary,
+      info,
+      files: filesOf(plan),
+      backup: '',
+      written: 0,
+      removed: 0,
+      version: fixed || same,
+      versionUpdated: Boolean(fixed),
+    }
+  }
+  const risky = summary.localEditedCount > 0 || (summary.noBaseline && summary.changed > 0)
+  if (risky && force !== true) {
+    return { ok: false, needConfirm: true, key, plan: summary, info, files: filesOf(plan) }
+  }
+  await snapshotProfile()
+  await recordTask({
+    key,
+    kind: 'update',
+    at: new Date().toISOString(),
+    ok: false,
+    status: 'running',
+    ref: up.ref,
+    detail: '更新到 ' + up.ref,
+  })
+  let done
+  try {
+    done = await applySkillUpdate(item, up, plan)
+  } catch (error) {
+    await recordTask({
+      key,
+      kind: 'update',
+      at: new Date().toISOString(),
+      ok: false,
+      status: 'failed',
+      ref: up.ref,
+      detail: String(error && error.message ? error.message : error),
+    })
+    throw error
+  }
+  await recordTask({
+    key,
+    kind: 'update',
+    at: new Date().toISOString(),
+    ok: true,
+    status: 'done',
+    ref: up.ref,
+    detail: '写入 ' + done.written + ' 个文件，删除 ' + done.removed + ' 个',
+    backup: done.backup,
+  })
+  TREE_CACHE.delete(up.repo)
+  await rm(CHECK_FILE, { force: true }).catch(() => {})
+  const installed = await installedVersionOf(up)
+  const relabeled = await writeRegistryVersion(key, installed)
+  await recordEvent(
+    key,
+    'update',
+    '写入 ' + done.written + ' 个文件，删除 ' + done.removed + ' 个' + (relabeled ? '，版本记为 ' + relabeled : ''),
+  )
+  return {
+    ok: true,
+    key,
+    plan: summary,
+    info,
+    files: filesOf(plan),
+    version: relabeled || installed,
+    versionUpdated: Boolean(relabeled),
+    ...done,
+  }
 }
 
 async function checkRepo(repo, pathHint) {
@@ -876,6 +1390,10 @@ async function runCheck(force = false) {
       items[item.key] = { state: 'no-source' }
       continue
     }
+    if (item.noUpdate) {
+      items[item.key] = { state: 'local', note: '本地自写，不跟上游比对' }
+      continue
+    }
     // 先试内容比对：走 raw.githubusercontent.com 的 CDN，不占 API 限流，
     // 所以即使 api.github.com 已经限流，也照样能判断上游变没变。
     const directContent = await contentCompare(item, repo)
@@ -949,6 +1467,223 @@ async function runCheck(force = false) {
 }
 
 /** 本插件自身的版本比对：本地 package.json vs 仓库 main 分支的 package.json。 */
+const PROFILE_NAME = process.env.DSH_PROFILE || process.env.DSH_PROFILE_NAME || 'desktop'
+const PROFILE_SNAPSHOT_FILE = path.join(DSH_HOME, 'github-inventory-profile.json')
+
+function profileDirPath() {
+  const explicit = process.env.DSH_PROFILE_DIR
+  if (typeof explicit === 'string' && explicit.trim()) return explicit.trim()
+  return path.join(DSH_HOME, 'profiles', PROFILE_NAME)
+}
+
+async function readProfileManifest() {
+  const dir = profileDirPath()
+  try {
+    const json = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
+    const bundles = json?.dsh?.profile?.bundles
+    const deps = json?.dependencies
+    return {
+      dir,
+      bundles: Array.isArray(bundles) ? bundles.filter((name) => typeof name === 'string') : [],
+      deps: deps && typeof deps === 'object' ? Object.keys(deps) : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+async function snapshotProfile() {
+  const manifest = await readProfileManifest()
+  if (!manifest) return null
+  const data = { at: new Date().toISOString(), dir: manifest.dir, bundles: manifest.bundles, deps: manifest.deps }
+  try {
+    await writeFile(PROFILE_SNAPSHOT_FILE, JSON.stringify(data, null, 2), 'utf8')
+  } catch {
+    // 记不下就算了，不能因为写快照把更新挡掉
+  }
+  return data
+}
+
+async function profileDrift() {
+  const manifest = await readProfileManifest()
+  if (!manifest) return null
+  const snapshot = await readJsonFile(PROFILE_SNAPSHOT_FILE, null)
+  if (!snapshot || !Array.isArray(snapshot.bundles)) {
+    return { ok: true, snapshotAt: '', profileDir: manifest.dir, missingBundles: [], addedBundles: [], missingDeps: [], missingOnDisk: [] }
+  }
+  const now = new Set(manifest.bundles)
+  const before = new Set(snapshot.bundles)
+  const nowDeps = new Set(manifest.deps)
+  const missingBundles = [...before].filter((name) => !now.has(name))
+  const addedBundles = [...now].filter((name) => !before.has(name))
+  const missingDeps = (Array.isArray(snapshot.deps) ? snapshot.deps : []).filter((name) => !nowDeps.has(name))
+  const missingOnDisk = manifest.bundles.filter((name) => {
+    try {
+      return !existsSync(path.join(manifest.dir, 'node_modules', name, 'package.json'))
+    } catch {
+      return false
+    }
+  })
+  return {
+    ok: missingBundles.length === 0 && missingDeps.length === 0,
+    snapshotAt: snapshot.at || '',
+    profileDir: manifest.dir,
+    missingBundles,
+    addedBundles,
+    missingDeps,
+    missingOnDisk,
+  }
+}
+
+async function repairProfile() {
+  const drift = await profileDrift()
+  if (!drift) throw new Error('读不到 profile 的 package.json')
+  if (drift.missingBundles.length === 0) return { ok: true, restored: [], restartRequired: false }
+  const manifest = await readProfileManifest()
+  const file = path.join(manifest.dir, 'package.json')
+  const json = JSON.parse(await readFile(file, 'utf8'))
+  const snapshot = await readJsonFile(PROFILE_SNAPSHOT_FILE, null)
+  const wanted = (Array.isArray(snapshot?.bundles) ? snapshot.bundles : drift.missingBundles).filter(
+    (name) => typeof name === 'string' && !(json?.dsh?.profile?.bundles || []).includes(name),
+  )
+  const backupDir = path.join(DSH_HOME, 'backups')
+  await mkdir(backupDir, { recursive: true })
+  const backup = path.join(backupDir, 'profile-package-' + stamp() + '.json')
+  await writeFile(backup, JSON.stringify(json, null, 2), 'utf8')
+  json.dsh = json.dsh || {}
+  json.dsh.profile = json.dsh.profile || {}
+  json.dsh.profile.bundles = [...(json.dsh.profile.bundles || []), ...wanted]
+  const tmp = file + '.gi-tmp'
+  await writeFile(tmp, JSON.stringify(json, null, 2) + '\n', 'utf8')
+  await rename(tmp, file)
+  return { ok: true, restored: wanted, backup, restartRequired: true }
+}
+
+const TASKS_FILE = path.join(DSH_HOME, 'github-inventory-tasks.json')
+const API_TASKS = '/api/github-inventory/tasks'
+
+// 把某条目在检查结果里改成「已是最新」：预览发现没有文件要写时的唯一正确收尾
+async function markCurrent(key, note) {
+  const data = (await readJsonFile(CHECK_FILE, null)) || null
+  if (!data || !data.items || typeof data.items !== 'object') return
+  const prev = data.items[key] || {}
+  data.items[key] = { ...prev, state: 'current', mode: prev.mode || '', note: note || '已是最新' }
+  await writeFile(CHECK_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8')
+}
+const API_ROLLBACK = '/api/github-inventory/rollback'
+
+async function recordTask(entry) {
+  const data = (await readJsonFile(TASKS_FILE, null)) || { tasks: [] }
+  let tasks = Array.isArray(data.tasks) ? data.tasks : []
+  // 同一条目这次既然跑完了，之前那些「跑到一半 / 已中断」的记录就不该再提示
+  if (entry && entry.status === 'done' && entry.key) {
+    tasks = tasks.filter(
+      (task) => !(task && task.key === entry.key && (task.status === 'running' || task.status === 'interrupted')),
+    )
+  }
+  tasks.unshift(entry)
+  await writeFile(TASKS_FILE, JSON.stringify({ tasks: tasks.slice(0, 40) }, null, 2) + '\n', 'utf8')
+}
+
+async function readTasks() {
+  const data = (await readJsonFile(TASKS_FILE, null)) || { tasks: [] }
+  const tasks = Array.isArray(data.tasks) ? data.tasks : []
+  const stale = 30 * 60 * 1000
+  let changed = false
+  const mapped = tasks.map((task) => {
+    if (task && task.status === 'running') {
+      const at = Date.parse(String(task.at || ''))
+      if (!Number.isFinite(at) || Date.now() - at > stale) {
+        changed = true
+        return { ...task, status: 'interrupted' }
+      }
+    }
+    return task
+  })
+  if (changed) await writeFile(TASKS_FILE, JSON.stringify({ tasks: mapped }, null, 2) + '\n', 'utf8')
+  return mapped.slice(0, 20)
+}
+
+const BACKUP_ROOT = path.join(DSH_HOME, 'backups', 'skills')
+
+async function listSkillBackups(key) {
+  let names = []
+  try {
+    names = await readdir(BACKUP_ROOT)
+  } catch {
+    return []
+  }
+  return names
+    .filter((name) => name === key || name.startsWith(key + '-'))
+    .sort()
+    .reverse()
+}
+
+async function rollbackItem(key) {
+  const items = (await buildList()).items || []
+  const item = items.find((entry) => entry.key === key)
+  if (!item) throw new Error('没有这个条目：' + key)
+  if (item.kind !== 'skill') throw new Error('只有技能支持回滚')
+  if (!item.enabled) throw new Error('这个技能已停用，先启用再回滚')
+  const backups = await listSkillBackups(key)
+  if (backups.length === 0) throw new Error('这个技能还没有备份，回滚不了')
+  const source = path.join(BACKUP_ROOT, backups[0])
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const parked = path.join(DSH_HOME, 'backups', 'skills-rollback', key + '-' + stamp)
+  await mkdir(path.dirname(parked), { recursive: true })
+  await cp(item.location, parked, { recursive: true })
+  await rm(item.location, { recursive: true, force: true })
+  try {
+    await cp(source, item.location, { recursive: true })
+  } catch (error) {
+    await cp(parked, item.location, { recursive: true }).catch(() => {})
+    throw new Error('回滚失败，已放回原样：' + String(error && error.message ? error.message : error))
+  }
+  await recordEvent(key, 'rollback', '回滚到 ' + backups[0])
+  await recordTask({
+    key,
+    kind: 'rollback',
+    at: new Date().toISOString(),
+    ok: true,
+    status: 'done',
+    detail: '回滚到 ' + backups[0],
+  })
+  await rm(CHECK_FILE, { force: true }).catch(() => {})
+  return { ok: true, key, restored: backups[0], parked, backups: backups.slice(0, 5), restartRequired: false }
+}
+
+const HISTORY_FILE = path.join(DSH_HOME, 'github-inventory-history.json')
+const HISTORY_LIMIT = 200
+
+async function readHistory() {
+  const data = await readJsonFile(HISTORY_FILE, null)
+  return data && Array.isArray(data.events) ? data.events : []
+}
+
+async function recordEvent(key, kind, detail) {
+  const events = await readHistory()
+  events.push({ at: new Date().toISOString(), key, kind, detail: detail || '', version: '' })
+  while (events.length > HISTORY_LIMIT) events.shift()
+  try {
+    await writeFile(HISTORY_FILE, JSON.stringify({ events }, null, 2), 'utf8')
+  } catch {
+    // 记录失败不影响主流程
+  }
+}
+
+async function historyFor(keys) {
+  const wanted = new Set(keys)
+  const events = await readHistory()
+  const out = {}
+  for (const event of events) {
+    if (!wanted.has(event.key)) continue
+    out[event.key] = out[event.key] || []
+    out[event.key].push(event)
+  }
+  for (const key of Object.keys(out)) out[key] = out[key].slice(-5)
+  return out
+}
+
 async function selfInfo() {
   let local = ''
   try {
@@ -1481,7 +2216,7 @@ function isLoopbackRequest(req) {
 /* ---------------------------------------------------------------- the plugin */
 
 /** 仅供测试：把内部纯函数暴露出来，宿主运行时不会用到。 */
-export const __internals = { rawUrl, rawGet, sha256, contentCompare, scanCapabilities, restartTarget }
+export const __internals = { upstreamNotes, latestCommit, rawUrl, rawGet, sha256, contentCompare, scanCapabilities, restartTarget, updateItem, summarizePlan, planSkillUpdate, profileDrift, repairProfile, snapshotProfile, rollbackItem, listSkillBackups, readTasks, resolveUpstreamRef, freshOf, markCurrent }
 
 export function apply(ctx) {
   const disposers = []
@@ -1493,7 +2228,8 @@ export function apply(ctx) {
       handler: async (req, res) => {
         if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
         try {
-          writeJson(res, 200, await buildList())
+          const data = await buildList()
+          writeJson(res, 200, { ...data, tasks: await readTasks() })
         } catch (error) {
           writeJson(res, 500, { error: String(error?.message || error) })
         }
@@ -1626,6 +2362,106 @@ export function apply(ctx) {
           writeJson(res, 200, await restartDsh())
         } catch (error) {
           writeJson(res, 400, { ok: false, error: String(error?.message || error) })
+        }
+      },
+    }),
+  )
+
+  disposers.push(
+    ctx.webServer.register({
+      kind: 'exact',
+      path: API_UPDATE,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
+        if ((req.method || 'POST') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        const body = (await readJsonBody(req)) || {}
+        const key = typeof body.key === 'string' ? body.key : ''
+        if (!key || key.length > 200 || /[\\/]/.test(key) || key.startsWith('.')) {
+          return writeJson(res, 400, { ok: false, error: 'invalid key' })
+        }
+        try {
+          writeJson(res, 200, await updateItem(key, body.force === true, body.preview === true))
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: String(error && error.message ? error.message : error) })
+        }
+      },
+    }),
+  )
+
+  disposers.push(
+    ctx.webServer.register({
+      kind: 'exact',
+      path: API_TASKS,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
+        if ((req.method || 'POST') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        await writeFile(TASKS_FILE, JSON.stringify({ tasks: [] }, null, 2) + '\n', 'utf8')
+        writeJson(res, 200, { ok: true, tasks: [] })
+      },
+    }),
+  )
+
+  disposers.push(
+    ctx.webServer.register({
+      kind: 'exact',
+      path: API_ROLLBACK,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
+        if ((req.method || 'POST') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        const body = (await readJsonBody(req)) || {}
+        const key = typeof body.key === 'string' ? body.key : ''
+        if (!key || key.length > 200 || /[\\/]/.test(key) || key.startsWith('.')) {
+          return writeJson(res, 400, { ok: false, error: 'invalid key' })
+        }
+        try {
+          writeJson(res, 200, await rollbackItem(key))
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: String(error && error.message ? error.message : error) })
+        }
+      },
+    }),
+  )
+
+  disposers.push(
+    ctx.webServer.register({
+      kind: 'exact',
+      path: API_PROFILE,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
+        if ((req.method || 'POST') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        const body = (await readJsonBody(req)) || {}
+        try {
+          if (body.action === 'repair') return writeJson(res, 200, await repairProfile())
+          if (body.action === 'snapshot') return writeJson(res, 200, { ok: true, snapshot: await snapshotProfile() })
+          return writeJson(res, 200, { ok: true, drift: await profileDrift() })
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: String(error && error.message ? error.message : error) })
+        }
+      },
+    }),
+  )
+
+  disposers.push(
+    ctx.webServer.register({
+      kind: 'exact',
+      path: API_HISTORY,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'loopback only' })
+        if ((req.method || 'POST') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        const body = (await readJsonBody(req)) || {}
+        if (body.action === 'clear') {
+          try {
+            await writeFile(HISTORY_FILE, JSON.stringify({ events: [] }, null, 2), 'utf8')
+            return writeJson(res, 200, { ok: true })
+          } catch (error) {
+            return writeJson(res, 400, { ok: false, error: String(error && error.message ? error.message : error) })
+          }
+        }
+        try {
+          const keys = Array.isArray(body.keys) ? body.keys.map(String) : []
+          writeJson(res, 200, { ok: true, history: await historyFor(keys) })
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: String(error && error.message ? error.message : error) })
         }
       },
     }),
